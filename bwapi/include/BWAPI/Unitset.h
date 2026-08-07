@@ -16,7 +16,12 @@ namespace BWAPI
   /// used for groups of units instead of having to manage each Unit individually.</summary>
   ///
   /// @see Unit
-  class Unitset : public SetContainer<BWAPI::Unit, std::hash<void*>>
+  struct StableUnitHash
+  {
+    std::size_t operator()(BWAPI::Unit unit) const noexcept;
+  };
+
+  class Unitset : public SetContainer<BWAPI::Unit, StableUnitHash>
   {
   public:
     /// <summary>A blank Unitset containing no elements.</summary> This is typically used as a

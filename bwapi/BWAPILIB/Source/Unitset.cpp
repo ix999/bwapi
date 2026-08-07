@@ -9,6 +9,11 @@
 
 namespace BWAPI
 {
+  std::size_t StableUnitHash::operator()(BWAPI::Unit unit) const noexcept
+  {
+    return unit ? std::hash<int>{}(unit->getID()) : 0;
+  }
+
   // initialize no-set
   const Unitset Unitset::none;
 
