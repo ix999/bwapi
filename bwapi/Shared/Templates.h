@@ -72,7 +72,10 @@ namespace BWAPI
     {
       // Note that the native finder in Broodwar uses an id between 1 and 1700, 0 being an unused entry
       // IDs provided by the client are BWAPI IDs, which are not bound
-      std::unordered_map<unsigned, unsigned> finderFlags;
+      // Native unit indexes are dense and bounded (1..1700). This scratch state used to be an
+      // unordered_map, which allocated and hashed several times for every spatial query. A fixed
+      // byte table represents the same 0/1/2 states without changing finder or callback order.
+      std::array<unsigned char, BW::UNIT_ARRAY_MAX_LENGTH + 1> finderFlags{};
       
       // Declare some variables
       int r = right, b = bottom;
