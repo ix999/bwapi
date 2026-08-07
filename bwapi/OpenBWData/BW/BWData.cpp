@@ -465,6 +465,24 @@ struct game_setup_helper_t {
           setup_function();
         }
 
+        // Park clientless "ghost" slots before the map-load tail runs. The lobby start
+        // (sync.h start_game) promotes every leftover open/computer slot to an occupied
+        // player with no client behind it; any ghost the melee slot shuffle seats on a
+        // start location is then handed a full idle starting base by create_starting_units,
+        // and razing its last building mid-game flips the melee "Opponents at most 0"
+        // victory trigger — ending a single-player game early with a win. As
+        // controller_neutral a ghost still counts for the opponents condition (so the real
+        // player is not instantly victorious in an otherwise empty game) but receives no
+        // starting units and runs no melee triggers, keeping single-player games truly solo.
+        if (vars.local_player_id != -1) {
+          for (auto& v : st.players) {
+            if ((int)(&v - st.players.data()) == vars.local_player_id) continue;
+            if (v.controller == bwgame::player_t::controller_occupied) {
+              v.controller = bwgame::player_t::controller_neutral;
+            }
+          }
+        }
+
         sync_funcs.sync_st.setup_info = nullptr;
       });
 
