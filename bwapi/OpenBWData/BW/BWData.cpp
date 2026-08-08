@@ -344,6 +344,12 @@ struct game_vars {
   };
   std::array<viewer_vars_t, 2> viewers;
 
+  // Dual-host lobby-end picked-race snapshot (the one GameImpl::createMultiPlayerGame takes
+  // itself; the dual lobby runs below the BWAPI layer, so BOTH viewers' GameImpls consume
+  // this shared copy at match start). Invalid outside dual games.
+  std::array<int, 12> dual_picked_races{};
+  bool dual_races_valid = false;
+
   int game_type = 0;
   bool game_type_melee = false;
 
@@ -398,6 +404,7 @@ struct game_setup_helper_t {
     using bwgame::error;
 
     for (auto& v : vars.viewers) v.left_game = false;
+    vars.dual_races_valid = false;
     vars.is_multi_player = false;
 
     auto& filename = vars.set_map_filename;
@@ -513,6 +520,7 @@ struct game_setup_helper_t {
     using bwgame::error;
 
     for (auto& v : vars.viewers) v.left_game = false;
+    vars.dual_races_valid = false;
     vars.is_multi_player = true;
 
     auto& filename = vars.set_map_filename;
@@ -598,6 +606,14 @@ struct game_setup_helper_t {
       input_action(1, ack, 1);
     }
 
+    // Lobby-end picked-race snapshot for the viewers' GameImpls (see game_vars): without it
+    // PlayerImpl::getRace reports unseen enemies as Unknown — a bot-visible difference the
+    // two-process reference never shows (races are lobby-known), and the root cause of the
+    // PvZ dual divergence (matchup-branched openings fork on race=Unknown).
+    for (size_t i = 0; i != vars.dual_picked_races.size(); ++i)
+      vars.dual_picked_races[i] = (int)sync_funcs.sync_st.picked_races.at(i);
+    vars.dual_races_valid = true;
+
     vars.is_replay = false;
     vars.map_filename = filename;
   }
@@ -621,6 +637,7 @@ struct game_setup_helper_t {
     using bwgame::error;
 
     for (auto& v : vars.viewers) v.left_game = false;
+    vars.dual_races_valid = false;
     vars.is_multi_player = true;
 
     auto& filename = vars.set_map_filename;
@@ -814,9 +831,15 @@ struct game_setup_helper_t {
   void leave_game(server_T& server, int viewer) {
     if (!vars.viewers[viewer].left_game) {
       vars.viewers[viewer].left_game = true;
-      // Only the primary viewer's leave tears the process out of the synced game; a
-      // secondary in-process bot leaving just stops receiving (dual-host semantics).
-      if (viewer == 0 && !vars.is_replay) {
+      // Dual-host (secondary_client set): a leave only marks THIS viewer's session over —
+      // nothing is sent into the shared session. Measured from the two-process reference:
+      // a leaver's {87,0} action never executes anywhere (its process exits first, and the
+      // winner's end comes from the sim's own player_defeated/player_won sweep, not from
+      // leave signalling) — injecting one marks the player left mid-sweep and corrupts the
+      // winner's victory attribution. A mid-game concede (bot leaves while healthy) has no
+      // deterministic reference either way (two-process learns of it via wall-clock socket
+      // teardown); harness bots only leave at their own MatchEnd, where the flag suffices.
+      if (viewer == 0 && !vars.is_replay && !secondary_client) {
         sync_funcs.leave_game(server);
       }
     }
@@ -985,6 +1008,51 @@ struct openbwapi_impl {
     ui_enabled = false;
   }
 
+  // SB_STATE_DIGEST_EVERY=N: per-frame live state digests, printed after each frame advance.
+  // Same walk as tools/analysis/state_digest.h (kept in sync by hand — deterministic engine
+  // order, raw fixed-point, RNG) so live games and replay re-simulation share digest semantics.
+  // The cross-mode state-equality probe for the dual-host gates. Print-only, off unless set.
+  void maybe_print_state_digest() {
+    static const int every = [] {
+      const char* e = std::getenv("SB_STATE_DIGEST_EVERY");
+      return e ? std::atoi(e) : 0;
+    }();
+    if (every <= 0 || vars.is_replay) return;
+    if (st.current_frame % every != 0) return;
+    uint64_t h = 1469598103934665603ull;
+    auto add = [&](uint64_t value) {
+      for (int i = 0; i < 8; ++i) {
+        h ^= (value >> (i * 8)) & 0xff;
+        h *= 1099511628211ull;
+      }
+    };
+    add((uint64_t)st.current_frame);
+    int units[12];
+    for (int slot = 0; slot < 12; ++slot) {
+      units[slot] = 0;
+      add((uint64_t)st.current_minerals[slot]);
+      add((uint64_t)st.current_gas[slot]);
+      for (auto& level : st.upgrade_levels.at(slot)) add((uint64_t)level);
+      for (auto researched : st.tech_researched.at(slot)) add((uint64_t)(researched ? 1 : 0));
+      for (auto& unit : st.player_units[slot]) {
+        ++units[slot];
+        add((uint64_t)unit.unit_type->id);
+        add((uint64_t)(int64_t)unit.sprite->position.x);
+        add((uint64_t)(int64_t)unit.sprite->position.y);
+        add((uint64_t)(int64_t)unit.hp.raw_value);
+        add((uint64_t)(int64_t)unit.shield_points.raw_value);
+        add((uint64_t)(int64_t)unit.energy.raw_value);
+        add((uint64_t)(unit.order_type ? (int)unit.order_type->id : -1));
+        add((uint64_t)unit.ground_weapon_cooldown);
+        add((uint64_t)unit.spell_cooldown);
+      }
+    }
+    add((uint64_t)st.lcg_rand_state);
+    std::printf("SBDIG f=%d h=%016llx rng=%08x n0=%d n1=%d\n", st.current_frame,
+                (unsigned long long)h, (unsigned)st.lcg_rand_state, units[0], units[1]);
+    std::fflush(stdout);
+  }
+
   void next_frame() {
     if (!ui && ui_enabled) {
       ui = std::make_unique<ui_wrapper>(st, game_setup_helper.env("OPENBW_MPQ_PATH", "."));
@@ -1011,6 +1079,7 @@ struct openbwapi_impl {
         game_setup_helper.next_frame();
       }
     }
+    maybe_print_state_digest();
 
     if (ui) {
       if (on_draw_changed && on_draw) {
@@ -1550,6 +1619,21 @@ int Game::dualSecondarySlot() const
 {
   auto* c = impl->game_setup_helper.secondary_client;
   return c ? c->player_slot : -1;
+}
+
+int Game::dualPickedRace(int slot) const
+{
+  if (!impl->vars.dual_races_valid) return -1;
+  if (slot < 0 || slot >= (int)impl->vars.dual_picked_races.size()) return -1;
+  return impl->vars.dual_picked_races[slot];
+}
+
+bool Game::dualSecondaryUidSortsFirst() const
+{
+  auto* sec = impl->game_setup_helper.secondary_client;
+  auto* loc = impl->sync_funcs.sync_st.local_client;
+  if (!sec || !loc) return false;
+  return sec->uid < loc->uid;
 }
 
 void Game::dualLocalOccupySlot(int n)

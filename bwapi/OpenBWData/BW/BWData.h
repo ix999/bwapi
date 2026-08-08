@@ -264,6 +264,8 @@ struct Game {
   void createDualPlayerGame(std::function<void()> setupFunction);
   void setDualSecondaryRace(int race);
   int dualSecondarySlot() const;
+  int dualPickedRace(int slot) const;
+  bool dualSecondaryUidSortsFirst() const;
   void dualLocalOccupySlot(int n);
   void dualSecondaryOccupySlot(int n);
   void startGame();

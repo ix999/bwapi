@@ -34,15 +34,16 @@ struct bot_lane_t {
   std::thread th;
   std::mutex m;
   std::condition_variable cv;
-  bool go = false, done = false, quit = false;
+  bool go = false, done = false, quit = false, finish = false;
   bool module_ok = true;
 };
 
-void lane_signal_go(bot_lane_t& lane, bool quit = false) {
+void lane_signal_go(bot_lane_t& lane, bool quit = false, bool finish = false) {
   {
     std::lock_guard<std::mutex> lock(lane.m);
     lane.go = true;
     lane.quit = quit;
+    lane.finish = finish;
   }
   lane.cv.notify_all();
 }
@@ -81,14 +82,19 @@ int dual_main() {
       g0.setGameTypeMelee();
 
       bool race1_sent = false, race2_sent = false;
-      // Seating matches the two-process reference exactly (measured via the start_game state
-      // dump): the index-2 uid sorts first in action application and wins slot 0; the local
-      // (index-1) client takes slot 1. Pinning those targets reproduces the reference's
-      // pre-shuffle state; retrying while unseated is safe (re-occupying a held slot no-ops,
-      // and a walker would overshoot — queued occupies apply at +latency and re-seat).
+      // Seating matches the two-process reference exactly: both reference walkers request the
+      // first open slot each lobby pump, occupies apply in uid-sorted client order, so the
+      // lower-sorting uid wins slot 0 and the other lands slot 1. Uids derive from
+      // (seed, client index), so WHICH client sorts first is seed-dependent — a fixed
+      // assignment reproduces only the seeds it was measured on (the 606/707 battery
+      // divergences). Pinning the uid-derived targets reproduces the reference's pre-shuffle
+      // seats; start_game's shuffle (seeded by seed^crc32(uids), identical across modes) then
+      // maps seats to identical start positions. Retrying while unseated is safe
+      // (re-occupying a held slot no-ops; queued occupies apply at +latency).
       g0.createDualPlayerGame([&]() {
-        if (g0.dualSecondarySlot() == -1) g0.dualSecondaryOccupySlot(0);
-        if (g0.g_LocalHumanID() == -1) g0.dualLocalOccupySlot(1);
+        int sec_slot = g0.dualSecondaryUidSortsFirst() ? 0 : 1;
+        if (g0.dualSecondarySlot() == -1) g0.dualSecondaryOccupySlot(sec_slot);
+        if (g0.g_LocalHumanID() == -1) g0.dualLocalOccupySlot(1 - sec_slot);
         if (g0.g_LocalHumanID() != -1 && !race1_sent) {
           g0.getPlayer(g0.g_LocalHumanID()).setRace(race1);
           race1_sent = true;
@@ -108,11 +114,13 @@ int dual_main() {
           BWAPI::BroodwarImpl_handle h(gameOwner.getGame(i));
           auto& lane = lanes[i];
           while (true) {
+            bool finishing;
             {
               std::unique_lock<std::mutex> lock(lane.m);
               lane.cv.wait(lock, [&] { return lane.go; });
               lane.go = false;
               if (lane.quit) break;
+              finishing = lane.finish;
             }
             // Section marker for the runner's log split: dispatch is strictly sequential, so
             // everything this bot prints (its own printf included — which never passes through
@@ -123,6 +131,20 @@ int dual_main() {
             h->update();
             fflush(stdout);
             lane.module_ok = h->externalModuleConnected;
+            if (finishing) {
+              // The reference launcher's end sequence, per viewer: the update above ran at
+              // the session-over state (firing the in-update MatchEnd with the REAL result —
+              // the teardown fallback hardcodes MatchEnd(false)), then onGameEnd + leave.
+              h->onGameEnd();
+              h->bwgame.leaveGame();
+              fflush(stdout);
+              {
+                std::lock_guard<std::mutex> lock(lane.m);
+                lane.done = true;
+              }
+              lane.cv.notify_all();
+              return;
+            }
             {
               std::lock_guard<std::mutex> lock(lane.m);
               lane.done = true;
@@ -148,31 +170,63 @@ int dual_main() {
         if (v > 0) frame_cap = v + 2000;
       }
       int frames = 0;
-      while ((!g0.gameOver() || !g1.gameOver()) && frames < frame_cap) {
+      // Per-viewer session-over latches, EDGE-TRIGGERED and sticky: the two-process
+      // reference launcher exits its whole process on the FIRST frame its gameOver() reads
+      // true — even if the condition is transient (measured: a "defeated" player's surviving
+      // worker can complete a pending build order and un-defeat it a few frames later; the
+      // reference bot is gone by then, so the dual bot must be too). gameOver() itself is a
+      // live computation, hence these latches rather than re-reading it.
+      bool lane_over[2] = { false, false };
+      // On latch, the lane gets the reference's end sequence: ONE final update at the
+      // session-over state (real-result MatchEnd fires there), onGameEnd, leave — then the
+      // thread exits and the lane is never dispatched again while the survivor plays on.
+      auto finish_lane = [&](int i) {
+        lane_over[i] = true;
+        printf("dual: viewer %d session over f=%d\n", i, frames);
+        fflush(stdout);
+        lane_signal_go(lanes[i], false, true);
+        lane_wait_done(lanes[i]);
+        lanes[i].th.join();
+      };
+      while ((!lane_over[0] || !lane_over[1]) && frames < frame_cap) {
+        if (!lane_over[0] && g0.gameOver()) finish_lane(0);
+        if (!lane_over[1] && g1.gameOver()) finish_lane(1);
+        if (lane_over[0] && lane_over[1]) break;
         // Strictly sequential per-frame dispatch: bot 0 completes before bot 1 starts, so
         // shared engine state sees one reader/writer at a time and order is deterministic.
-        lane_signal_go(lanes[0]);
-        lane_wait_done(lanes[0]);
-        lane_signal_go(lanes[1]);
-        lane_wait_done(lanes[1]);
-        if (!lanes[0].module_ok || !lanes[1].module_ok) {
+        // A latched lane is never dispatched again — its two-process counterpart's process
+        // has exited — while the survivor plays on to its own end (victory sweep or cap).
+        bool modules_ok = true;
+        if (!lane_over[0]) {
+          lane_signal_go(lanes[0]);
+          lane_wait_done(lanes[0]);
+          modules_ok = modules_ok && lanes[0].module_ok;
+        }
+        if (!lane_over[1]) {
+          lane_signal_go(lanes[1]);
+          lane_wait_done(lanes[1]);
+          modules_ok = modules_ok && lanes[1].module_ok;
+        }
+        if (!modules_ok) {
           printf("dual: a bot module failed to load, exiting\n");
           break;
         }
         g0.nextFrame();
         ++frames;
         if (frames % 10000 == 0) {
-          printf("dual: f=%d over0=%d over1=%d\n", frames, (int)g0.gameOver(), (int)g1.gameOver());
+          printf("dual: f=%d over0=%d over1=%d\n", frames, (int)lane_over[0], (int)lane_over[1]);
           fflush(stdout);
         }
       }
       printf("dual: loop exit f=%d over0=%d over1=%d\n", frames, (int)g0.gameOver(), (int)g1.gameOver());
       fflush(stdout);
 
-      for (auto& lane : lanes) {
-        lane_signal_go(lane, true);
-        lane_wait_done(lane);
-        lane.th.join();
+      // Only lanes that never latched (frame-cap or module-failure exits) remain running.
+      for (int i = 0; i != 2; ++i) {
+        if (lane_over[i]) continue;
+        lane_signal_go(lanes[i], true);
+        lane_wait_done(lanes[i]);
+        lanes[i].th.join();
       }
       printf("dual: game finished after %d frames\n", frames);
       return 0;

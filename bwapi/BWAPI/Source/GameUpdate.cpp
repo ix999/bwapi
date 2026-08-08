@@ -1,5 +1,8 @@
 #include "GameImpl.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 #include <Util/StringUtil.h>
 
 #include "PlayerImpl.h"
@@ -57,6 +60,16 @@ void GameImpl::update()
         allDone = true;
       }
       if ( this->BWAPIPlayer->isDefeated() )
+      {
+        win     = false;
+        allDone = true;
+      }
+      // A viewer that leaveGame()d is done (not a win). The two-process reference reaches
+      // the same MatchEnd through its own sim: the local leave's echo marks the player left
+      // (isDefeated true) before the launcher's final update. The dual-host leave is a
+      // per-viewer flag that never touches the shared sim (the surviving viewer's state must
+      // not see it), so read the flag here — same fire, same frame, either mode.
+      if ( !allDone && this->bwgame.gameOver() )
       {
         win     = false;
         allDone = true;
@@ -136,6 +149,16 @@ void GameImpl::update()
   //if not, then we load the AI dll specified in bwapi.ini
   if ( !this->startedClient )
   {
+    // Dual-host: the lobby ran below the BWAPI layer (one lobby serving two viewers), so
+    // take the lobby-end picked-race snapshot createMultiPlayerGame would have captured
+    // itself from the BW-layer copy. Without it PlayerImpl::getRace reports unseen enemies
+    // as Unknown — a bot-visible difference the two-process reference never shows.
+    for (int i = 0; i < BW::PLAYABLE_PLAYER_COUNT; ++i)
+    {
+      int pickedRace = this->bwgame.dualPickedRace(i);
+      if (pickedRace >= 0) lastKnownRaceBeforeStart[i] = Race(pickedRace);
+    }
+
     this->initializeTournamentModule();
     this->initializeAIModule();
 
@@ -158,6 +181,35 @@ void GameImpl::update()
 
   //each frame we add a MatchFrame event to the queue
   events.push_back(Event::MatchFrame());
+
+  // SB_VIEW_LOG=1: per-frame bot-visible view summary, printed at the exact point the AI's
+  // MatchFrame fires — the cross-mode mirror-equality probe for the dual-host equivalence
+  // gates (which fields a bot could see differently between modes). Print-only, off unless set.
+  {
+    static const bool sb_view_log = [] {
+      const char* e = std::getenv("SB_VIEW_LOG");
+      return e && *e && *e != '0';
+    }();
+    if (sb_view_log && this->self())
+    {
+      int larva = 0, selfUnits = 0;
+      for (Unit u : this->self()->getUnits())
+      {
+        ++selfUnits;
+        if (u->getType() == UnitTypes::Zerg_Larva) ++larva;
+      }
+      Player e = this->enemy();
+      std::printf("SBVIEW v=%d f=%d m=%d g=%d s=%d/%d n=%d L=%d en=%d er=%c lat=%d rlf=%d\n",
+                  this->bwgame.viewer_index, this->frameCount,
+                  this->self()->minerals(), this->self()->gas(),
+                  this->self()->supplyUsed(), this->self()->supplyTotal(),
+                  selfUnits, larva,
+                  e ? (int)e->getUnits().size() : -1,
+                  e ? e->getRace().c_str()[0] : '?',
+                  this->getLatencyFrames(), this->getRemainingLatencyFrames());
+      std::fflush(stdout);
+    }
+  }
 
   //if the AI is a client process, this will signal the client to process the next frame
   //if the AI is a DLL, this will translate the events into AIModule callbacks.
