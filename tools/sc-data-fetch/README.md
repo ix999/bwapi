@@ -19,8 +19,14 @@ putting the assets themselves in git:
   not.
 
 Drive downloads only work if the owner has link-sharing enabled on the snapshot
-files; the IDs by themselves grant no access. Claude sessions with the Google
-Drive connector can instead resolve the same IDs through the connector.
+files; the IDs by themselves grant no access. In managed cloud sessions the
+environment's network policy must also allow `drive.google.com` /
+`drive.usercontent.google.com` (configurable in the environment settings), or
+the download path is blocked regardless of sharing. Claude sessions with the
+Google Drive connector can instead resolve the same IDs through the connector,
+which needs no link-sharing but rejects files over 10 MB — enough for every
+map and `Patch_rt.mpq`, not for `StarDat.mpq`/`BrooDat.mpq`. Those two can
+only come from a local source (`SB_SC_DATA_SRC`) or an unblocked download.
 
 After fetching:
 
