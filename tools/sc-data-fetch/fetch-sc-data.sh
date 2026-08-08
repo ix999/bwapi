@@ -7,7 +7,10 @@
 # Sources, in order:
 #   1. SB_SC_DATA_SRC=<dir>  — copy from a local directory (e.g. a Drive-for-desktop mount
 #      or an existing installation). No network needed.
-#   2. Google Drive download by file ID. Requires the Drive files to be link-shared
+#   2. SB_SC_DATA_GIT_URL=<url> [SB_SC_DATA_GIT_REF=sc-data-assets] — shallow-clone a
+#      (private) git branch holding the assets and copy from it. Use for a private repo
+#      the session already has credentials for; never point this at a public repo.
+#   3. Google Drive download by file ID. Requires the Drive files to be link-shared
 #      ("anyone with the link") by their owner; IDs alone grant nothing otherwise.
 #
 # Usage: fetch-sc-data.sh [DEST_DIR]   (default DEST_DIR: ./sc-data)
@@ -19,6 +22,16 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 manifest="$here/MANIFEST.tsv"
 dest="${1:-./sc-data}"
 src_dir="${SB_SC_DATA_SRC:-}"
+
+git_dir=""
+if [ -n "${SB_SC_DATA_GIT_URL:-}" ]; then
+  git_dir="$(mktemp -d)/sc-data-git"
+  if ! git clone --quiet --depth 1 -b "${SB_SC_DATA_GIT_REF:-sc-data-assets}" \
+      "$SB_SC_DATA_GIT_URL" "$git_dir"; then
+    echo "warn: could not clone $SB_SC_DATA_GIT_URL — falling back to other sources" >&2
+    git_dir=""
+  fi
+fi
 
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
@@ -51,6 +64,9 @@ while IFS=$'\t' read -r path id size hash; do
   elif [ -n "$src_dir" ] && [ -f "$src_dir/$path" ]; then
     cp "$src_dir/$path" "$out"
     echo "copied       $path"
+  elif [ -n "$git_dir" ] && [ -f "$git_dir/$path" ]; then
+    cp "$git_dir/$path" "$out"
+    echo "from-git     $path"
   elif fetch_drive "$id" "$out"; then
     echo "downloaded   $path"
   else

@@ -13,10 +13,13 @@ putting the assets themselves in git:
   Google Drive file ID in the owner's snapshot, byte size, and (when pinned)
   sha256.
 - `fetch-sc-data.sh [DEST_DIR]` — populates `DEST_DIR` (default `./sc-data`)
-  from either a local source directory (`SB_SC_DATA_SRC=<dir>`, e.g. a
-  Drive-for-desktop mount) or by downloading the Drive IDs. Every file is
-  size-verified; hashes are verified when pinned and printed for pinning when
-  not.
+  from, in order: a local source directory (`SB_SC_DATA_SRC=<dir>`, e.g. a
+  Drive-for-desktop mount), a private git branch holding the assets
+  (`SB_SC_DATA_GIT_URL=<url>`, branch `SB_SC_DATA_GIT_REF`, default
+  `sc-data-assets` — e.g. an orphan branch of the private bot repo, which bot
+  sessions already have credentials for), or by downloading the Drive IDs.
+  Every file is size-verified; hashes are verified when pinned and printed for
+  pinning when not.
 
 Drive downloads only work if the owner has link-sharing enabled on the snapshot
 files; the IDs by themselves grant no access. In managed cloud sessions the
