@@ -23,8 +23,12 @@ namespace BWAPI
 {
   using namespace Filter;
 
-  GameWrapper Broodwar;
-  Game *BroodwarPtr;
+  // Dual-host groundwork: the Broodwar binding is per-thread so two in-process bot instances
+  // (each on its own dispatch thread) resolve to their own GameImpl. Single-threaded hosts see
+  // identical behaviour — one thread, one binding. The wrapper carries stream state (ss), so
+  // the wrapper object itself must be thread-local too, not just the pointer.
+  thread_local GameWrapper Broodwar;
+  thread_local Game *BroodwarPtr;
 
   Game *GameWrapper::operator ->() const
   {

@@ -36,7 +36,6 @@ namespace BWAPI
 
 #define RGBRESERVE {0,0,0,0xFF}
 
-  bool rgbInitialized = false;
   static const RGBQUAD defaultPalette[256] =
   {
     {0,0,0}      , RGBRESERVE   , RGBRESERVE   , RGBRESERVE   , RGBRESERVE   , RGBRESERVE   , RGBRESERVE   , RGBRESERVE   ,
@@ -103,16 +102,18 @@ namespace BWAPI
   }
   int getRGBIndex(int red, int green, int blue)
   {
-    static BYTE closestColor[64][64][64];
-    if ( !rgbInitialized )
-    {
-      rgbInitialized = true;
+    // Magic-static init is thread-safe (C++11); replaces the racy rgbInitialized flag so two
+    // in-process bot threads cannot observe a half-built table. Single-thread behaviour identical.
+    struct table_t { BYTE v[64][64][64]; };
+    static const table_t closestColor = []{
+      table_t t;
       for ( unsigned int r = 0; r < 64; ++r )
         for ( unsigned int g = 0; g < 64; ++g )
           for ( unsigned int b = 0; b < 64; ++b )
-            closestColor[r][g][b] = (BYTE)Colors::getBestIdFor(r << 2, g << 2, b << 2);
-    }
-    return closestColor[(BYTE)red >> 2][(BYTE)green >> 2][(BYTE)blue >> 2];
+            t.v[r][g][b] = (BYTE)Colors::getBestIdFor(r << 2, g << 2, b << 2);
+      return t;
+    }();
+    return closestColor.v[(BYTE)red >> 2][(BYTE)green >> 2][(BYTE)blue >> 2];
   }
   Color::Color(int red, int green, int blue)
     : Type( getRGBIndex(red, green, blue) )

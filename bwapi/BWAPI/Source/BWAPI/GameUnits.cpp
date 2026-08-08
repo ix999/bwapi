@@ -463,7 +463,7 @@ namespace BWAPI
   //---------------------------------------------- UPDATE UNITS ----------------------------------------------
   void GameImpl::updateUnits()
   {
-    static Unitset selectedU;
+    static thread_local Unitset selectedU;
 
     // Update all unit data
     computeUnitExistence();

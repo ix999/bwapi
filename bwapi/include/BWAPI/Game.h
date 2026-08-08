@@ -1753,7 +1753,7 @@ namespace BWAPI
 
   };
 
-  extern Game *BroodwarPtr;
+  extern thread_local Game *BroodwarPtr;
 
   /// <summary>Broodwar wrapper
   class GameWrapper
@@ -1785,7 +1785,7 @@ namespace BWAPI
 
   /// <summary>The primary Game interface, used to access any Game information or perform Game
   /// actions.</summary>
-  extern GameWrapper Broodwar;
+  extern thread_local GameWrapper Broodwar;
 
 }
 
