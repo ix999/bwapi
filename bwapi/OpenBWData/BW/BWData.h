@@ -260,6 +260,12 @@ struct Game {
   void setGameTypeUseMapSettings();
   void createSinglePlayerGame(std::function<void()> setupFunction);
   void createMultiPlayerGame(std::function<void()> setupFunction);
+  // Dual-host: one state, two in-process local clients (ENGINE_OPT_DUALHOST.md).
+  void createDualPlayerGame(std::function<void()> setupFunction);
+  void setDualSecondaryRace(int race);
+  int dualSecondarySlot() const;
+  void dualLocalOccupySlot(int n);
+  void dualSecondaryOccupySlot(int n);
   void startGame();
   void switchToSlot(int n);
   int connectedPlayerCount();

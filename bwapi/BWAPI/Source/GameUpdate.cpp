@@ -405,6 +405,13 @@ void GameImpl::initializeAIModule()
       Util::trim(dll, Util::is_whitespace_or_newline);
       Util::trim(dll, [](char c) { return c == '"'; });
 
+      // Dual-host: the second in-process bot loads its own module image (a DISTINCT file
+      // copy — dlopen of the same path would return one shared image and shared bot statics).
+      if (this->bwgame.viewer_index == 1) {
+        const char* p2 = std::getenv("SBBOT_P2_AI");
+        if (p2 && *p2) dll = p2;
+      }
+
 #ifdef COMPAT
       auto colon = dll.find(':');
       if (colon != std::string::npos) {

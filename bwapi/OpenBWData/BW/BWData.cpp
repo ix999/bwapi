@@ -505,6 +505,118 @@ struct game_setup_helper_t {
     vars.map_filename = filename;
   }
 
+  // Dual-host (ENGINE_OPT_DUALHOST.md): ONE state, ONE process, TWO local clients — the
+  // in-process replacement for a two-process LOCAL_AUTO game. The secondary registers under
+  // the uid a peer launched with OPENBW_CLIENT_INDEX=2 would have had, so lobby seating and
+  // action-application order match the two-process reference by construction.
+  void create_dual_player_game(std::function<void()> setup_function) {
+    using bwgame::error;
+
+    for (auto& v : vars.viewers) v.left_game = false;
+    vars.is_multi_player = true;
+
+    auto& filename = vars.set_map_filename;
+
+    auto& global_st = *st.global;
+    auto& game_st = *st.game;
+    game_st = bwgame::game_state();
+    st = bwgame::state();
+    st.global = &global_st;
+    st.game = &game_st;
+
+    g_global_init_if_necessary(global_st, env("OPENBW_MPQ_PATH", "."));
+
+    scenario_chk_data.clear();
+
+    vars.map_player_controllers = {};
+    vars.map_player_races = {};
+
+    server_n = 0;
+
+    auto name = sync_funcs.sync_st.local_client->name;
+    auto* save_replay = sync_funcs.sync_st.save_replay;
+    sync_funcs.action_st = bwgame::action_state();
+    sync_funcs.sync_st = bwgame::sync_state();
+    sync_funcs.sync_st.local_client->name = std::move(name);
+    sync_funcs.sync_st.save_replay = save_replay;
+    if (save_replay) *save_replay = bwgame::replay_saver_state();
+
+    // Match the LOCAL_AUTO reference's action latency exactly — actions schedule at frame
+    // N+latency, so a different value is a different game.
+    sync_funcs.sync_st.latency = 3;
+
+    secondary_client = sync_funcs.add_local_secondary_client("p2", 2);
+
+    bwgame::game_load_functions load_funcs(st);
+
+    (bwgame::data_loading::mpq_file<>(filename))(scenario_chk_data, "staredit/scenario.chk");
+
+    if (save_replay) {
+      save_replay->map_data = scenario_chk_data.data();
+      save_replay->map_data_size = scenario_chk_data.size();
+    }
+
+    load_funcs.load_map_data(scenario_chk_data.data(), scenario_chk_data.size(), [&]() {
+
+      vars.game_type = vars.game_type_melee ? 2 : 10;
+      sync_funcs.sync_st.game_type_melee = vars.game_type_melee;
+      if (vars.game_type_melee) {
+        load_funcs.setup_info.victory_condition = 1;
+        load_funcs.setup_info.starting_units = 2;
+        load_funcs.setup_info.resource_type = 1;
+      }
+      sync_funcs.sync_st.setup_info = &load_funcs.setup_info;
+
+      while (!sync_funcs.sync_st.game_started) {
+        sync_funcs.sync(noop_server);
+        vars.local_player_id = sync_funcs.sync_st.local_client->player_slot;
+        setup_function();
+      }
+      vars.local_player_id = sync_funcs.sync_st.local_client->player_slot;
+
+      // Park clientless ghost slots exactly as single-player creation does, keeping BOTH
+      // local clients' seats (same early-victory bug otherwise — see the single-player note).
+      int p1_slot = sync_funcs.sync_st.local_client->player_slot;
+      int p2_slot = secondary_client ? secondary_client->player_slot : -1;
+      for (auto& v : st.players) {
+        int idx = (int)(&v - st.players.data());
+        if (idx == p1_slot || idx == p2_slot) continue;
+        if (v.controller == bwgame::player_t::controller_occupied) {
+          v.controller = bwgame::player_t::controller_neutral;
+        }
+      }
+
+      sync_funcs.sync_st.setup_info = nullptr;
+    });
+
+    // The peer's start acknowledgement: the in-game applier discards every action from a
+    // client whose game_started flag is unset (sync.h:842), and the flag is set only by an
+    // id_game_started action FROM that client — which a peer process sends when its own side
+    // starts. Inject the same for the in-process secondary.
+    {
+      uint8_t ack[1] = { (uint8_t)bwgame::sync_messages::id_game_started };
+      input_action(1, ack, 1);
+    }
+
+    vars.is_replay = false;
+    vars.map_filename = filename;
+  }
+
+  // Secondary-client lobby race change: the same id_set_race action a peer process's
+  // set_local_client_race would put on the wire, attributed to client 2.
+  void set_secondary_race(int race) {
+    if (!secondary_client) return;
+    uint8_t buf[2] = { (uint8_t)bwgame::sync_messages::id_set_race, (uint8_t)race };
+    input_action(1, buf, 2);
+  }
+
+  // Secondary-client lobby seating: the id_occupy_slot action a peer's switchToPlayer sends.
+  void set_secondary_occupy_slot(int n) {
+    if (!secondary_client) return;
+    uint8_t buf[2] = { (uint8_t)bwgame::sync_messages::id_occupy_slot, (uint8_t)n };
+    input_action(1, buf, 2);
+  }
+
   void create_multi_player_game(std::function<void()> setup_function) {
     using bwgame::error;
 
@@ -1422,6 +1534,32 @@ void Game::setGameTypeUseMapSettings()
 void Game::createSinglePlayerGame(std::function<void()> setupFunction)
 {
   impl->game_setup_helper.create_single_player_game(std::move(setupFunction));
+}
+
+void Game::createDualPlayerGame(std::function<void()> setupFunction)
+{
+  impl->game_setup_helper.create_dual_player_game(std::move(setupFunction));
+}
+
+void Game::setDualSecondaryRace(int race)
+{
+  impl->game_setup_helper.set_secondary_race(race);
+}
+
+int Game::dualSecondarySlot() const
+{
+  auto* c = impl->game_setup_helper.secondary_client;
+  return c ? c->player_slot : -1;
+}
+
+void Game::dualLocalOccupySlot(int n)
+{
+  impl->game_setup_helper.switch_to_slot(n);
+}
+
+void Game::dualSecondaryOccupySlot(int n)
+{
+  impl->game_setup_helper.set_secondary_occupy_slot(n);
 }
 
 void Game::createMultiPlayerGame(std::function<void()> setupFunction)
