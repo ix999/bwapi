@@ -453,7 +453,7 @@ namespace BWAPI
    * We wanted to save passing the Game parameter everywhere, so we expect everywhere in the code that this
    * variable is instantialised.
    */
-  extern GameImpl& BroodwarImpl;
+  extern thread_local GameImpl& BroodwarImpl;
   
   // temporary manager for BroodwarImpl until we get rid of it
   struct BroodwarImpl_handle {

@@ -30,12 +30,16 @@ struct GameOwner_impl;
 
 void sacrificeThreadForUI(std::function<void()> f);
 
+// Dual-host: bind the calling thread to a viewer for command attribution (default 0).
+void set_thread_viewer(int viewer);
+
 struct GameOwner {
   std::unique_ptr<GameOwner_impl> impl;
   GameOwner();
   ~GameOwner();
 
   Game getGame();
+  Game getGame(int viewer);
   void setPrintTextCallback(std::function<void(const char*)> func);
 };
 
@@ -162,6 +166,8 @@ struct Snapshot {
 
 struct Game {
   openbwapi_impl* impl = nullptr;
+  // Dual-host: which in-process viewer (bot) this handle represents; single mode uses 0.
+  int viewer_index = 0;
 
   void overrideEnvVar(std::string var, std::string value);
 

@@ -324,11 +324,25 @@ struct draw_ui_wrapper {
 
 #endif
 
+// Dual-host: which in-process viewer (bot) the CURRENT THREAD is dispatching for. Command
+// encoders on viewer-less handles (Player, Unit) attribute through this; the dual launcher
+// sets it once per bot dispatch thread. Single mode: always 0.
+thread_local int active_viewer = 0;
+
+void set_thread_viewer(int viewer) {
+  active_viewer = viewer;
+}
+
 struct game_vars {
   int local_player_id = -1;
   bool is_replay = false;
 
-  bool left_game = false;
+  // Per-viewer identity (dual-host: one in-process bot per entry; single mode uses [0]).
+  struct viewer_vars_t {
+    bool left_game = false;
+    std::string character_name;
+  };
+  std::array<viewer_vars_t, 2> viewers;
 
   int game_type = 0;
   bool game_type_melee = false;
@@ -338,7 +352,6 @@ struct game_vars {
 
   std::string map_filename;
   std::string set_map_filename;
-  std::string character_name;
 
   std::array<int, 12> map_player_races{};
   std::array<int, 12> map_player_controllers{};
@@ -384,7 +397,7 @@ struct game_setup_helper_t {
   void create_single_player_game(std::function<void()> setup_function) {
     using bwgame::error;
 
-    vars.left_game = false;
+    for (auto& v : vars.viewers) v.left_game = false;
     vars.is_multi_player = false;
 
     auto& filename = vars.set_map_filename;
@@ -495,7 +508,7 @@ struct game_setup_helper_t {
   void create_multi_player_game(std::function<void()> setup_function) {
     using bwgame::error;
 
-    vars.left_game = false;
+    for (auto& v : vars.viewers) v.left_game = false;
     vars.is_multi_player = true;
 
     auto& filename = vars.set_map_filename;
@@ -686,10 +699,12 @@ struct game_setup_helper_t {
   }
 
   template<typename server_T>
-  void leave_game(server_T& server) {
-    if (!vars.left_game) {
-      vars.left_game = true;
-      if (!vars.is_replay) {
+  void leave_game(server_T& server, int viewer) {
+    if (!vars.viewers[viewer].left_game) {
+      vars.viewers[viewer].left_game = true;
+      // Only the primary viewer's leave tears the process out of the synced game; a
+      // secondary in-process bot leaving just stops receiving (dual-host semantics).
+      if (viewer == 0 && !vars.is_replay) {
         sync_funcs.leave_game(server);
       }
     }
@@ -735,7 +750,17 @@ struct game_setup_helper_t {
     else if (server_n == 3) sync_funcs.set_local_client_race(file_server, (bwgame::race_t)race);
   }
 
-  void input_action(const uint8_t* data, size_t size) {
+  void input_action(int viewer, const uint8_t* data, size_t size) {
+    if (viewer == 1) {
+      // Dual-host: attribute the secondary in-process bot's commands to ITS sync client so
+      // scheduling (frame N+latency, uid order) matches the two-process reference exactly.
+      if (!secondary_client) bwgame::error("input_action: viewer 1 without a secondary client");
+      if (server_n == 0) sync_funcs.input_action_for(noop_server, secondary_client, data, size);
+      else if (server_n == 1) sync_funcs.input_action_for(tcp_server, secondary_client, data, size);
+      else if (server_n == 2) sync_funcs.input_action_for(local_server, secondary_client, data, size);
+      else if (server_n == 3) sync_funcs.input_action_for(file_server, secondary_client, data, size);
+      return;
+    }
     if (server_n == 0) sync_funcs.input_action(noop_server, data, size);
     else if (server_n == 1) sync_funcs.input_action(tcp_server, data, size);
     else if (server_n == 2) sync_funcs.input_action(local_server, data, size);
@@ -749,11 +774,19 @@ struct game_setup_helper_t {
     else if (server_n == 3) sync_funcs.bwapi_compatible_next_frame(file_server);
   }
 
-  void leave_game() {
-    if (server_n == 0) leave_game(noop_server);
-    else if (server_n == 1) leave_game(tcp_server);
-    else if (server_n == 2) leave_game(local_server);
-    else if (server_n == 3) leave_game(file_server);
+  void leave_game(int viewer = 0) {
+    if (server_n == 0) leave_game(noop_server, viewer);
+    else if (server_n == 1) leave_game(tcp_server, viewer);
+    else if (server_n == 2) leave_game(local_server, viewer);
+    else if (server_n == 3) leave_game(file_server, viewer);
+  }
+
+  // Dual-host: the second in-process bot's sync client (nullptr in single mode).
+  bwgame::sync_state::client_t* secondary_client = nullptr;
+
+  bwgame::sync_state::client_t* client_for_viewer(int viewer) {
+    if (viewer == 1 && secondary_client) return secondary_client;
+    return sync_funcs.sync_st.local_client;
   }
 
   void create_unit(const bwgame::unit_type_t* unit_type, bwgame::xy pos, int owner) {
@@ -996,6 +1029,11 @@ Game GameOwner::getGame()
   return {&impl->impl};
 }
 
+Game GameOwner::getGame(int viewer)
+{
+  return {&impl->impl, viewer};
+}
+
 void GameOwner::setPrintTextCallback(std::function<void (const char*)> func)
 {
   impl->impl.print_text_callback = func;
@@ -1033,7 +1071,7 @@ void Game::overrideEnvVar(std::string var, std::string value)
 }
 
 int Game::g_LocalHumanID() const {
-  return impl->sync_funcs.sync_st.local_client->player_slot;
+  return impl->game_setup_helper.client_for_viewer(viewer_index)->player_slot;
 }
 
 Player Game::getPlayer(int n) const
@@ -1112,12 +1150,12 @@ bool Game::InReplay() const
 
 void Game::QueueCommand(const void* buf, size_t size)
 {
-  if (!impl->vars.is_replay) impl->game_setup_helper.input_action((const uint8_t*)buf, size);
+  if (!impl->vars.is_replay) impl->game_setup_helper.input_action(viewer_index,(const uint8_t*)buf, size);
 }
 
 void Game::leaveGame()
 {
-  impl->game_setup_helper.leave_game();
+  impl->game_setup_helper.leave_game(viewer_index);
 }
 
 bool Game::gameClosed() const
@@ -1367,8 +1405,8 @@ UnitIterator Game::UnitNodeList_ScannerSweep_end() const
 
 void Game::setCharacterName(const std::string& name)
 {
-  impl->vars.character_name = name;
-  impl->game_setup_helper.set_name(name);
+  impl->vars.viewers[viewer_index].character_name = name;
+  if (viewer_index == 0) impl->game_setup_helper.set_name(name);
 }
 
 void Game::setGameTypeMelee()
@@ -1484,11 +1522,11 @@ bool Game::getScenarioChk(std::vector<char>& data) const
 bool Game::gameOver() const
 {
   auto done = [&]() {
-    int n = impl->sync_funcs.sync_st.local_client->player_slot;
+    int n = impl->game_setup_helper.client_for_viewer(viewer_index)->player_slot;
     if (n != -1 && (impl->funcs.player_won(n) || impl->funcs.player_defeated(n))) return true;
     return false;
   };
-  return impl->vars.left_game || done();
+  return impl->vars.viewers[viewer_index].left_game || done();
 }
 
 void Game::printText(const char* str) const
@@ -1867,7 +1905,7 @@ void Player::setUpgradeLevel(int upgrade, int level)
   w.template put<uint8_t>(owner);
   w.template put<uint8_t>(upgrade);
   w.template put<int8_t>(level);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 void Player::setResearched(int tech, bool researched)
@@ -1879,7 +1917,7 @@ void Player::setResearched(int tech, bool researched)
   w.template put<uint8_t>(owner);
   w.template put<uint8_t>(tech);
   w.template put<uint8_t>(researched);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 void Player::setMinerals(int value)
@@ -1890,7 +1928,7 @@ void Player::setMinerals(int value)
   w.template put<uint8_t>(2);
   w.template put<uint8_t>(owner);
   w.template put<int32_t>(value);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 void Player::setGas(int value)
@@ -1901,7 +1939,7 @@ void Player::setGas(int value)
   w.template put<uint8_t>(3);
   w.template put<uint8_t>(owner);
   w.template put<int32_t>(value);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 Unit::operator bool() const
@@ -2281,7 +2319,7 @@ void Unit::setHitPoints(int value)
   w.template put<uint8_t>(0);
   w.template put<uint16_t>(impl->funcs.get_unit_id(u).raw_value);
   w.template put<int32_t>(value);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 void Unit::setShields(int value)
@@ -2292,7 +2330,7 @@ void Unit::setShields(int value)
   w.template put<uint8_t>(1);
   w.template put<uint16_t>(impl->funcs.get_unit_id(u).raw_value);
   w.template put<int32_t>(value);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 void Unit::setEnergy(int value)
@@ -2303,7 +2341,7 @@ void Unit::setEnergy(int value)
   w.template put<uint8_t>(2);
   w.template put<uint16_t>(impl->funcs.get_unit_id(u).raw_value);
   w.template put<int32_t>(value);
-  impl->game_setup_helper.input_action(w.data(), w.size());
+  impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
 }
 
 
