@@ -1669,7 +1669,15 @@ bool Game::gameOver() const
 
 void Game::printText(const char* str) const
 {
-  if (impl->print_text_callback) impl->print_text_callback(str);
+  if (!impl->print_text_callback) return;
+  // Dual-host: both bots share one stdout, so tag each line with the dispatching viewer
+  // (thread-bound) — the runner splits the stream back into per-player logs.
+  if (impl->game_setup_helper.secondary_client) {
+    std::string tagged = "V" + std::to_string(active_viewer) + "|" + str;
+    impl->print_text_callback(tagged.c_str());
+    return;
+  }
+  impl->print_text_callback(str);
 }
 
 void Game::nextFrame()

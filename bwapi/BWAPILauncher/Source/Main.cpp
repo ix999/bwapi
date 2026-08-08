@@ -114,7 +114,14 @@ int dual_main() {
               lane.go = false;
               if (lane.quit) break;
             }
+            // Section marker for the runner's log split: dispatch is strictly sequential, so
+            // everything this bot prints (its own printf included — which never passes through
+            // the Broodwar channel) lands between its marker and the next. Flush both sides so
+            // block-buffered stdout cannot smear output across sections.
+            printf("SBV%d>\n", i);
+            fflush(stdout);
             h->update();
+            fflush(stdout);
             lane.module_ok = h->externalModuleConnected;
             {
               std::lock_guard<std::mutex> lock(lane.m);
