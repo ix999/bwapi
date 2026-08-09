@@ -303,6 +303,16 @@ namespace BWAPI
       PlayerImpl *enemyPlayer;
       Server server;
       std::list<Event> events;
+      // sb-perf boundary map snapshot: dimensions + the walk-tile grid are immutable
+      // after map load; serving them here removes millions of cross-library crossings
+      // (BWEB/BWEM interrogate the map through this boundary — the Linux ladder profile
+      // attributed ~15% of process to this chain, concentrated in BWEB init).
+      // SB_MAP_SNAPSHOT=0 kill-switch. Snapshot restores keep the same map, so the
+      // cache needs no invalidation within a process.
+      mutable int sbMapWidth_ = -1;
+      mutable int sbMapHeight_ = -1;
+      mutable std::vector<std::uint64_t> sbWalkBits_;
+      void sbBuildMapSnapshot() const;
     private:
       std::vector<std::string> sentMessages;
 

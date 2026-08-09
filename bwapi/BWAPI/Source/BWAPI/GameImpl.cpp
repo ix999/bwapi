@@ -337,14 +337,48 @@ namespace BWAPI
     return pBestUnit;
   }
   //----------------------------------------------- MAP WIDTH ------------------------------------------------
+  static bool sbMapSnapshotEnabled()
+  {
+    static const bool on = [] {
+      const char* v = std::getenv("SB_MAP_SNAPSHOT");
+      return !v || std::strcmp(v, "0") != 0;
+    }();
+    return on;
+  }
+  void GameImpl::sbBuildMapSnapshot() const
+  {
+    sbMapWidth_ = map.getWidth();
+    sbMapHeight_ = map.getHeight();
+    const int ww = sbMapWidth_ * 4, wh = sbMapHeight_ * 4;
+    sbWalkBits_.assign((static_cast<std::size_t>(ww) * wh + 63) / 64, 0);
+    for (int y = 0; y < wh; ++y)
+      for (int x = 0; x < ww; ++x)
+        if (map.walkable(x, y))
+        {
+          const std::size_t i = static_cast<std::size_t>(y) * ww + x;
+          sbWalkBits_[i >> 6] |= 1ull << (i & 63);
+        }
+  }
   int GameImpl::mapWidth() const
   {
-    return map.getWidth();
+    if (!sbMapSnapshotEnabled()) return map.getWidth();
+    if (sbMapWidth_ < 0)
+    {
+      if (map.getWidth() <= 0) return map.getWidth();
+      sbBuildMapSnapshot();
+    }
+    return sbMapWidth_;
   }
   //----------------------------------------------- MAP HEIGHT -----------------------------------------------
   int GameImpl::mapHeight() const
   {
-    return map.getHeight();
+    if (!sbMapSnapshotEnabled()) return map.getHeight();
+    if (sbMapWidth_ < 0)
+    {
+      if (map.getWidth() <= 0) return map.getHeight();
+      sbBuildMapSnapshot();
+    }
+    return sbMapHeight_;
   }
   //---------------------------------------------- MAP FILE NAME ---------------------------------------------
   std::string GameImpl::mapFileName() const
@@ -369,7 +403,16 @@ namespace BWAPI
   //--------------------------------------------- IS WALKABLE ------------------------------------------------
   bool GameImpl::isWalkable(int x, int y) const
   {
-    return map.walkable(x, y);
+    if (!sbMapSnapshotEnabled()) return map.walkable(x, y);
+    if (sbMapWidth_ < 0)
+    {
+      if (map.getWidth() <= 0) return map.walkable(x, y);
+      sbBuildMapSnapshot();
+    }
+    const int ww = sbMapWidth_ * 4, wh = sbMapHeight_ * 4;
+    if (x < 0 || y < 0 || x >= ww || y >= wh) return map.walkable(x, y);
+    const std::size_t i = static_cast<std::size_t>(y) * ww + x;
+    return (sbWalkBits_[i >> 6] >> (i & 63)) & 1;
   }
   //--------------------------------------------- GET GROUND HEIGHT ------------------------------------------
   int GameImpl::getGroundHeight(int x, int y) const
