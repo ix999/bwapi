@@ -127,14 +127,15 @@ namespace BWAPI
   //--------------------------------------------- UPDATE -----------------------------------------------------
   void PlayerImpl::updateData()
   { 
+    GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3)
     self->color = index < BW::PLAYER_COUNT ? bwplayer.playerColorIndex() : 0;
   
     // Get upgrades, tech, resources
     if ( this->isNeutral() || 
       index >= BW::PLAYER_COUNT ||
-         (!BroodwarImpl.isReplay() && 
-          BroodwarImpl.self()->isEnemy(this) && 
-          !BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation)) )
+         (!game.isReplay() && 
+          game.self()->isEnemy(this) && 
+          !game.isFlagEnabled(Flag::CompleteMapInformation)) )
     {
       self->minerals           = 0;
       self->gas                = 0;
@@ -211,9 +212,9 @@ namespace BWAPI
     }
 
     // Get Scores, supply
-    if ( (!BroodwarImpl.isReplay() && 
-          BroodwarImpl.self()->isEnemy(this) && 
-          !BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation)) ||
+    if ( (!game.isReplay() && 
+          game.self()->isEnemy(this) && 
+          !game.isFlagEnabled(Flag::CompleteMapInformation)) ||
           index >= BW::PLAYER_COUNT)
     {
       MemZero(self->supplyTotal);

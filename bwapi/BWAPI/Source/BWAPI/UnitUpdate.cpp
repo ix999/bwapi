@@ -31,6 +31,7 @@ namespace BWAPI
   // Note that scanner sweeps are tricky, since the scanning graphic isn't associated with the scanner unit
   bool isScannerVisible(BW::Position position)
   {
+    GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3)
     int left = (position.x - 64) / 32;
     int top = (position.y - 64) / 32;
     int right = (position.x + 64) / 32;
@@ -39,7 +40,7 @@ namespace BWAPI
     {
       for (int y = top; y <= bottom; ++y)
       {
-        if (BroodwarImpl.isVisible(x, y))
+        if (game.isVisible(x, y))
           return true;
       }
     }
@@ -63,6 +64,7 @@ namespace BWAPI
 
   bool UnitImpl::mirrorSkipEligible(BW::Unit& o) const
   {
+    GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
     // SB_MIRROR_SKIP: unset/1 = on (default), 0 = off (kill-switch), or a category —
     // "workers" | "buildings" | "army" — to restrict skipping to that class only
     // (the divergence-bisect instrument: category runs binary-search a missed input).
@@ -85,9 +87,9 @@ namespace BWAPI
       if (skipMode == 3 && !isBuilding) return false;
       if (skipMode == 4 && (isWorker || isBuilding)) return false;
     }
-    if (BroodwarImpl.isReplay() ||
-        BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation) ||
-        BroodwarImpl.isFlagEnabled(Flag::UserInput))
+    if (game.isReplay() ||
+        game.isFlagEnabled(Flag::CompleteMapInformation) ||
+        game.isFlagEnabled(Flag::UserInput))
       return false;
     int t = o.unitType();
     if (t == UnitTypes::Enum::Spell_Scanner_Sweep ||
@@ -110,6 +112,7 @@ namespace BWAPI
 
   void UnitImpl::updateInternalData()
   {
+    GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
     BW::Unit o = bwunit;
     if ( !o )
       return;
@@ -126,8 +129,8 @@ namespace BWAPI
     // truth — otherwise a denied/ignored command's prediction would persist and suppress
     // re-issues (the seed-101 scout Move omission).
     {
-      int frame = BroodwarImpl.getFrameCount();
-      int horizon = BroodwarImpl.getLatencyFrames() + 2;
+      int frame = game.getFrameCount();
+      int horizon = game.getLatencyFrames() + 2;
       if (frame - lastCommandFrame < horizon || frame - lastImmediateCommandFrame < horizon)
       {
         mirrorSnapValid = false;
@@ -170,21 +173,21 @@ namespace BWAPI
       mirrorSnapValid = false;
       mirrorStreak = 0;
     }
-    int selfPlayerID = BroodwarImpl.server.getPlayerID(Broodwar->self());
-    self->replayID   = BWAPI::BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation) ? BW::UnitTarget(o).getTarget() : 0;
+    int selfPlayerID = game.server.getPlayerID(game.self());
+    self->replayID   = game.isFlagEnabled(Flag::CompleteMapInformation) ? BW::UnitTarget(o).getTarget() : 0;
     if (isAlive)
     {
-      _getPlayer = BroodwarImpl._getPlayer(o.playerID()); //_getPlayer
+      _getPlayer = game._getPlayer(o.playerID()); //_getPlayer
       //------------------------------------------------------------------------------------------------------
       //isVisible
       for ( int i = 0; i < 9; ++i )
       {
         if ( i == selfPlayerID )
           continue;
-        PlayerImpl* player = static_cast<PlayerImpl*>(Broodwar->getPlayer(i));
+        PlayerImpl* player = static_cast<PlayerImpl*>(game.getPlayer(i));
         if ( !o.hasSprite() || !player )
           self->isVisible[i] = false;
-        else if (!BroodwarImpl.isReplay() && !BWAPI::BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation))
+        else if (!game.isReplay() && !game.isFlagEnabled(Flag::CompleteMapInformation))
           self->isVisible[i] = false;
         else if ( _getPlayer == player )
           self->isVisible[i] = true;
@@ -200,7 +203,7 @@ namespace BWAPI
           self->isVisible[selfPlayerID] = false;
           self->isDetected              = false;
         }
-        else if (_getPlayer == BWAPI::BroodwarImpl.self())
+        else if (_getPlayer == game.self())
         {
           self->isVisible[selfPlayerID] = true;
           self->isDetected              = true;
@@ -212,11 +215,11 @@ namespace BWAPI
         }
         else
         {
-          self->isVisible[selfPlayerID] = (o.visibilityFlags() & (1 << BroodwarImpl.BWAPIPlayer->getIndex())) != 0;
+          self->isVisible[selfPlayerID] = (o.visibilityFlags() & (1 << game.BWAPIPlayer->getIndex())) != 0;
           if (o.statusFlag(BW::StatusFlags::RequiresDetection))
           {
             self->isVisible[selfPlayerID] &= ((o.visibilityStatus() == 0xffffffff) ||
-                                             ((o.visibilityStatus() & (1 << BroodwarImpl.BWAPIPlayer->getIndex())) != 0) ||
+                                             ((o.visibilityStatus() & (1 << game.BWAPIPlayer->getIndex())) != 0) ||
                                                o.movementFlag(BW::MovementFlags::Moving | BW::MovementFlags::Accelerating) ||
                                                o.orderID() == Orders::Move ||
                                                o.groundWeaponCooldown() > 0 ||
@@ -225,7 +228,7 @@ namespace BWAPI
           }
           bool canDetect = !o.statusFlag(BW::StatusFlags::RequiresDetection) ||
                            o.visibilityStatus() == 0xffffffff ||
-                           ((o.visibilityStatus() & (1 << BroodwarImpl.BWAPIPlayer->getIndex())) != 0);
+                           ((o.visibilityStatus() & (1 << game.BWAPIPlayer->getIndex())) != 0);
           self->isDetected = self->isVisible[selfPlayerID] & canDetect;
         }
       }
@@ -273,10 +276,10 @@ namespace BWAPI
       {
         if (o.fighter_inHanger() == false ||
             o.statusFlag(BW::StatusFlags::InTransport | BW::StatusFlags::InBuilding) )
-          _getTransport = BroodwarImpl.getUnitFromBWUnit(o.fighter_parent());
+          _getTransport = game.getUnitFromBWUnit(o.fighter_parent());
       }
       else if (o.statusFlag(BW::StatusFlags::InTransport | BW::StatusFlags::InBuilding) )
-        _getTransport = BroodwarImpl.getUnitFromBWUnit(o.connectedUnit());
+        _getTransport = game.getUnitFromBWUnit(o.connectedUnit());
 
       //------------------------------------------------------------------------------------------------------
       //_getPosition
@@ -351,6 +354,7 @@ namespace BWAPI
   /// @todo TODO Refactor this entirely
   void UnitImpl::updateData()
   {
+    GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
     BW::Unit o = bwunit;
     // Mirror dirty-skip: all outputs below are functions of the unchanged fingerprint and
     // already hold their converged values. Only the swarm/dweb flags are reset — they are
@@ -460,7 +464,7 @@ namespace BWAPI
       self->stimTimer           = o.stimTimer();        //getStimTimer
       self->order               = o.orderID();          //getOrder
       self->secondaryOrder      = o.secondaryOrderID(); //getSecondaryOrder
-      self->buildUnit           = o.currentBuildUnit() ? BroodwarImpl.server.getUnitID(BroodwarImpl.getUnitFromBWUnit(o.currentBuildUnit())) : -1; //getBuildUnit
+      self->buildUnit           = o.currentBuildUnit() ? game.server.getUnitID(game.getUnitFromBWUnit(o.currentBuildUnit())) : -1; //getBuildUnit
       //------------------------------------------------------------------------------------------------------
       //isTraining
       if (_getType == UnitTypes::Terran_Nuclear_Silo &&
@@ -524,25 +528,25 @@ namespace BWAPI
                        self->order == Orders::Burrowed     ||
                        self->order == Orders::NukeTrain    ||
                        self->order == Orders::Larva;
-      self->target               = BroodwarImpl.server.getUnitID(BroodwarImpl.getUnitFromBWUnit(o.moveTarget_pUnit())); //getTarget
+      self->target               = game.server.getUnitID(game.getUnitFromBWUnit(o.moveTarget_pUnit())); //getTarget
       self->targetPositionX      = o.moveTarget().x;  //getTargetPosition
       self->targetPositionY      = o.moveTarget().y;  //getTargetPosition
       self->orderTargetPositionX = o.orderTarget().x;
       self->orderTargetPositionY = o.orderTarget().y;
-      self->orderTarget          = BroodwarImpl.server.getUnitID(BroodwarImpl.getUnitFromBWUnit(o.orderTarget_pUnit()));  //getOrderTarget
+      self->orderTarget          = game.server.getUnitID(game.getUnitFromBWUnit(o.orderTarget_pUnit()));  //getOrderTarget
       //------------------------------------------------------------------------------------------------------
       //getAddon
       self->addon = -1;
       if (_getType.isBuilding())
       {
-        UnitImpl* addon = BroodwarImpl.getUnitFromBWUnit(o.currentBuildUnit());
+        UnitImpl* addon = game.getUnitFromBWUnit(o.currentBuildUnit());
         if ( addon && addon->isAlive && UnitType(addon->bwunit.unitType()).isAddon() )
-          self->addon = BroodwarImpl.server.getUnitID(addon);
+          self->addon = game.server.getUnitID(addon);
         else
         {
-          addon = BroodwarImpl.getUnitFromBWUnit(o.building_addon());
+          addon = game.getUnitFromBWUnit(o.building_addon());
           if ( addon && addon->isAlive && UnitType(addon->bwunit.unitType()).isAddon() )
-            self->addon = BroodwarImpl.server.getUnitID(addon);
+            self->addon = game.server.getUnitID(addon);
         }
       }
       //------------------------------------------------------------------------------------------------------
@@ -550,16 +554,16 @@ namespace BWAPI
       self->nydusExit = -1;
       if ( _getType == UnitTypes::Zerg_Nydus_Canal )
       {
-        UnitImpl* nydus = BroodwarImpl.getUnitFromBWUnit(o.nydus_exit());
+        UnitImpl* nydus = game.getUnitFromBWUnit(o.nydus_exit());
         if ( nydus && nydus->isAlive && nydus->bwunit.unitType() == UnitTypes::Zerg_Nydus_Canal )
-          self->nydusExit = BroodwarImpl.server.getUnitID(nydus);
+          self->nydusExit = game.server.getUnitID(nydus);
       }
       //------------------------------------------------------------------------------------------------------
       //getPowerUp
       self->powerUp = -1;
-      UnitImpl* powerUp = BroodwarImpl.getUnitFromBWUnit(o.worker_pPowerup());
+      UnitImpl* powerUp = game.getUnitFromBWUnit(o.worker_pPowerup());
       if (powerUp && powerUp->isAlive)
-        self->powerUp = BroodwarImpl.server.getUnitID(powerUp);
+        self->powerUp = game.server.getUnitID(powerUp);
 
       self->isAccelerating  = o.movementFlag(BW::MovementFlags::Accelerating);  //isAccelerating
       self->isBeingGathered = _getType.isResourceContainer() && (o.gatherQueueCount() || o.nextGatherer());  //isBeingGathered
@@ -573,7 +577,7 @@ namespace BWAPI
       self->isLifted        = o.statusFlag(BW::StatusFlags::InAir) &&
                               UnitType(o.unitType()).isBuilding(); //isLifted
       self->isParasited     = o.parasiteFlags() != 0; //isParasited
-      self->isSelected      = BWAPI::BroodwarImpl.isFlagEnabled(BWAPI::Flag::UserInput) && userSelected; //isSelected
+      self->isSelected      = game.isFlagEnabled(BWAPI::Flag::UserInput) && userSelected; //isSelected
       self->isUnderStorm    = o.stormTimer() != 0; //isUnderStorm
       self->isPowered       = !(_getType.getRace() == Races::Protoss && _getType.isBuilding() && o.statusFlag(BW::StatusFlags::DoodadStatesThing)); // !isUnpowered
       self->isStuck         = o.movementState() == BW::UM_MoveToLegal;
@@ -601,10 +605,10 @@ namespace BWAPI
         self->interceptorCount = o.carrier_inHangerCount() + o.carrier_outHangerCount();
         break;
       case UnitTypes::Enum::Protoss_Interceptor:
-        self->carrier = BroodwarImpl.server.getUnitID(BroodwarImpl.getUnitFromBWUnit(o.fighter_parent()));
+        self->carrier = game.server.getUnitID(game.getUnitFromBWUnit(o.fighter_parent()));
         break;
       case UnitTypes::Enum::Zerg_Larva:
-        self->hatchery = BroodwarImpl.server.getUnitID(BroodwarImpl.getUnitFromBWUnit(o.connectedUnit()));
+        self->hatchery = game.server.getUnitID(game.getUnitFromBWUnit(o.connectedUnit()));
         break;
       default:
         break;
@@ -667,13 +671,13 @@ namespace BWAPI
     if (canAccess())
     {
       self->exists = true;
-      self->player = BroodwarImpl.server.getPlayerID(_getPlayer);
+      self->player = game.server.getPlayerID(_getPlayer);
       self->type   = _getType;
     }
     else
     {
       self->exists = false;
-      self->player = BroodwarImpl.server.getPlayerID(BroodwarImpl._getPlayer(11));
+      self->player = game.server.getPlayerID(game._getPlayer(11));
       self->type   = UnitTypes::Unknown;
     }
     if (canAccessInside())
@@ -789,9 +793,9 @@ namespace BWAPI
       //------------------------------------------------------------------------------------------------------
       //getRallyUnit
       if ( this->_getType.canProduce() )
-        self->rallyUnit = BroodwarImpl.server.getUnitID(BroodwarImpl.getUnitFromBWUnit(o.rally_unit()));
+        self->rallyUnit = game.server.getUnitID(game.getUnitFromBWUnit(o.rally_unit()));
 
-      self->transport       = BroodwarImpl.server.getUnitID(_getTransport);   //getTransport
+      self->transport       = game.server.getUnitID(_getTransport);   //getTransport
       self->isHallucination = o.statusFlag(BW::StatusFlags::IsHallucination);  //isHallucination
     }
     else
@@ -824,7 +828,7 @@ namespace BWAPI
       for (size_t i = 0; i != sizeof(UnitData); ++i)
         if (a[i] != b[i])
           std::printf("MIRROR-VERIFY-DIFF f=%d id=%d type=%d offset=%zu stale=%02x fresh=%02x\n",
-                      BroodwarImpl.getFrameCount(), id, (int)o.unitType(), i, a[i], b[i]);
+                      game.getFrameCount(), id, (int)o.unitType(), i, a[i], b[i]);
     }
   }
 }

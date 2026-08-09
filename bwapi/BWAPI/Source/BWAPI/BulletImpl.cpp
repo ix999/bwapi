@@ -33,6 +33,7 @@ namespace BWAPI
   }
   void BulletImpl::updateData()
   {
+    GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3)
     bool _exists = __exists && bwbullet;
     if ( _exists )
     {
@@ -42,7 +43,7 @@ namespace BWAPI
 
         if ( !bwbullet.hasSprite() || !player )
           self->isVisible[i] = false;
-        else if ( BWAPI::BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation) )
+        else if ( game.isFlagEnabled(Flag::CompleteMapInformation) )
           self->isVisible[i] = true;
         else
           self->isVisible[i] = Broodwar->isVisible( TilePosition(bwbullet.spritePosition()) );
@@ -54,12 +55,12 @@ namespace BWAPI
     }
 
     if ( _exists && 
-         (BWAPI::BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation) ||
-          BroodwarImpl.isReplay() || 
+         (game.isFlagEnabled(Flag::CompleteMapInformation) ||
+          game.isReplay() || 
           isVisible()) )
     {
-      UnitImpl *_getSource = BWAPI::BroodwarImpl.getUnitFromBWUnit(bwbullet.sourceUnit());
-      UnitImpl *_getTarget = BWAPI::BroodwarImpl.getUnitFromBWUnit(bwbullet.attackTargetUnit());
+      UnitImpl *_getSource = game.getUnitFromBWUnit(bwbullet.sourceUnit());
+      UnitImpl *_getTarget = game.getUnitFromBWUnit(bwbullet.attackTargetUnit());
       Player   _getPlayer = _getSource ? _getSource->_getPlayer : nullptr;
 
       // id, player, type, source
