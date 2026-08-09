@@ -1234,6 +1234,9 @@ namespace BWAPI
       u->wasCompleted = false;
       u->wasAccessible = false;
       u->wasVisible = false;
+      u->mirrorSnapValid = false;
+      u->mirrorStreak = 0;
+      u->mirrorSkip = false;
       u->nukeDetected = false;
       u->lastType = UnitTypes::Unknown;
       u->lastPlayer = nullptr;

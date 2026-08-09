@@ -1,6 +1,8 @@
 #include "UnitImpl.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <sstream>
 
@@ -44,11 +46,130 @@ namespace BWAPI
     return false;
   }
 
+  // True when every input updateInternalData()/updateData() would read for this unit is
+  // covered by the mirror fingerprint. The excluded cases each read state outside the
+  // unit's own engine blocks: scanner sweeps read map tiles, fighters/loaded units read
+  // their parent's position, nydus/addon/powerup paths read the linked unit's liveness,
+  // and replay/CompleteMapInformation/UserInput modes read target-resolution/selection
+  // state the fingerprint does not carry.
+  bool UnitImpl::mirrorVerifyMode()
+  {
+    static const bool verify = [] {
+      const char* v = std::getenv("SB_MIRROR_SKIP");
+      return v && std::strcmp(v, "verify") == 0;
+    }();
+    return verify;
+  }
+
+  bool UnitImpl::mirrorSkipEligible(BW::Unit& o) const
+  {
+    // SB_MIRROR_SKIP: unset/1 = on (default), 0 = off (kill-switch), or a category —
+    // "workers" | "buildings" | "army" — to restrict skipping to that class only
+    // (the divergence-bisect instrument: category runs binary-search a missed input).
+    static const int skipMode = [] {
+      const char* v = std::getenv("SB_MIRROR_SKIP");
+      if (!v || !*v || std::strcmp(v, "1") == 0) return 1;
+      if (std::strcmp(v, "workers") == 0) return 2;
+      if (std::strcmp(v, "buildings") == 0) return 3;
+      if (std::strcmp(v, "army") == 0) return 4;
+      if (std::strcmp(v, "verify") == 0) return 5;
+      return 0;
+    }();
+    if (skipMode == 0) return false;
+    if (skipMode != 1)
+    {
+      const UnitType ut(o.unitType());
+      bool isWorker = ut.isWorker();
+      bool isBuilding = ut.isBuilding();
+      if (skipMode == 2 && !isWorker) return false;
+      if (skipMode == 3 && !isBuilding) return false;
+      if (skipMode == 4 && (isWorker || isBuilding)) return false;
+    }
+    if (BroodwarImpl.isReplay() ||
+        BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation) ||
+        BroodwarImpl.isFlagEnabled(Flag::UserInput))
+      return false;
+    int t = o.unitType();
+    if (t == UnitTypes::Enum::Spell_Scanner_Sweep ||
+        t == UnitTypes::Enum::Protoss_Interceptor ||
+        t == UnitTypes::Enum::Protoss_Scarab ||
+        t == UnitTypes::Enum::Terran_Vulture_Spider_Mine ||
+        t == UnitTypes::Enum::Zerg_Nydus_Canal ||
+        // remainingTrainTime derives from orderQueueTimer, which cycles every frame and is
+        // deliberately outside the fingerprint — never skip the larva-timing depots.
+        t == UnitTypes::Enum::Zerg_Hatchery ||
+        t == UnitTypes::Enum::Zerg_Lair ||
+        t == UnitTypes::Enum::Zerg_Hive)
+      return false;
+    if (o.statusFlag(BW::StatusFlags::InTransport | BW::StatusFlags::InBuilding))
+      return false;
+    if (o.currentBuildUnit() || o.building_addon() || o.worker_pPowerup())
+      return false;
+    return true;
+  }
+
   void UnitImpl::updateInternalData()
   {
     BW::Unit o = bwunit;
     if ( !o )
       return;
+    // Mirror dirty-skip (sb-perf mirror cut 2): one seam call replaces the ~100 accessor
+    // crossings below when the engine-side inputs are unchanged. Skip only from the second
+    // consecutive unchanged frame so history fields (lastHitPoints, last*Cooldown,
+    // lastFrameSet) have converged; updateData() honours mirrorSkip and keeps only its
+    // externally re-marked resets.
+    mirrorSkip = false;
+    mirrorVerify = false;
+    // Latency compensation writes PREDICTED values (order, targets, queue counts) into the
+    // shared data at command-issue time; the engine-side fingerprint cannot see them. Any
+    // recently-commanded unit recomputes until one post-latency refresh restores engine
+    // truth — otherwise a denied/ignored command's prediction would persist and suppress
+    // re-issues (the seed-101 scout Move omission).
+    {
+      int frame = BroodwarImpl.getFrameCount();
+      int horizon = BroodwarImpl.getLatencyFrames() + 2;
+      if (frame - lastCommandFrame < horizon || frame - lastImmediateCommandFrame < horizon)
+      {
+        mirrorSnapValid = false;
+        mirrorStreak = 0;
+      }
+    }
+    if (isAlive && mirrorSkipEligible(o))
+    {
+      BW::MirrorFingerprint now;
+      o.mirrorFingerprint(&now);
+      if (mirrorSnapValid && std::memcmp(&now, &mirrorSnap, sizeof(now)) == 0)
+      {
+        if (mirrorStreak >= 1)
+        {
+          // verify mode: recompute anyway and diff the outputs at the end of updateData —
+          // any difference IS the fingerprint hole, printed field-exact.
+          if (mirrorVerifyMode())
+          {
+            mirrorVerify = true;
+            mirrorVerifySnap = *self;
+          }
+          else
+          {
+            mirrorSkip = true;
+            return;
+          }
+        }
+        else
+          ++mirrorStreak;
+      }
+      else
+      {
+        mirrorSnap = now;
+        mirrorSnapValid = true;
+        mirrorStreak = 0;
+      }
+    }
+    else
+    {
+      mirrorSnapValid = false;
+      mirrorStreak = 0;
+    }
     int selfPlayerID = BroodwarImpl.server.getPlayerID(Broodwar->self());
     self->replayID   = BWAPI::BroodwarImpl.isFlagEnabled(Flag::CompleteMapInformation) ? BW::UnitTarget(o).getTarget() : 0;
     if (isAlive)
@@ -231,6 +352,15 @@ namespace BWAPI
   void UnitImpl::updateData()
   {
     BW::Unit o = bwunit;
+    // Mirror dirty-skip: all outputs below are functions of the unchanged fingerprint and
+    // already hold their converged values. Only the swarm/dweb flags are reset — they are
+    // re-marked every frame by the overlap pass in updateUnits, not by this function.
+    if (mirrorSkip)
+    {
+      self->isUnderDarkSwarm = false;
+      self->isUnderDWeb      = false;
+      return;
+    }
     self->isUnderDarkSwarm = false;
     self->isUnderDWeb      = false;
     if (canAccess())
@@ -685,5 +815,16 @@ namespace BWAPI
       self->order = BWtoBWAPI_Order[self->order];
     if ( self->secondaryOrder >= 0 && self->secondaryOrder < Orders::Enum::MAX )
       self->secondaryOrder = BWtoBWAPI_Order[self->secondaryOrder];
+
+    if (mirrorVerify)
+    {
+      mirrorVerify = false;
+      const unsigned char* a = reinterpret_cast<const unsigned char*>(&mirrorVerifySnap);
+      const unsigned char* b = reinterpret_cast<const unsigned char*>(self);
+      for (size_t i = 0; i != sizeof(UnitData); ++i)
+        if (a[i] != b[i])
+          std::printf("MIRROR-VERIFY-DIFF f=%d id=%d type=%d offset=%zu stale=%02x fresh=%02x\n",
+                      BroodwarImpl.getFrameCount(), id, (int)o.unitType(), i, a[i], b[i]);
+    }
   }
 }

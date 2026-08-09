@@ -541,6 +541,16 @@ namespace BWAPI
     {
       unitLookup[unit] = (int)(unitVector.size());
       unitVector.push_back(unit);
+      // SB_MIRROR_IDLOG: print-only probe — ids are assigned lazily in CALL order, ids feed
+      // StableUnitHash and thus every Unitset's iteration order, so any change in when the
+      // mirror first references a unit is bot-visible. Diff two runs' ledgers to see it.
+      static const bool idlog = [] {
+        const char* v = std::getenv("SB_MIRROR_IDLOG");
+        return v && *v && *v != '0';
+      }();
+      if (idlog)
+        std::printf("SBID id=%d frame=%d\n", unitLookup[unit],
+                    BroodwarImpl.isInGame() ? BroodwarImpl.getFrameCount() : -1);
     }
     return unitLookup[unit];
   }

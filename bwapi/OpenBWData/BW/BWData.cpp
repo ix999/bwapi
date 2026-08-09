@@ -832,15 +832,18 @@ struct game_setup_helper_t {
     if (!vars.viewers[viewer].left_game) {
       vars.viewers[viewer].left_game = true;
       // Dual-host (secondary_client set): a leave only marks THIS viewer's session over —
-      // nothing is sent into the shared session. Measured from the two-process reference:
-      // a leaver's {87,0} action never executes anywhere (its process exits first, and the
-      // winner's end comes from the sim's own player_defeated/player_won sweep, not from
-      // leave signalling) — injecting one marks the player left mid-sweep and corrupts the
-      // winner's victory attribution. A mid-game concede (bot leaves while healthy) has no
-      // deterministic reference either way (two-process learns of it via wall-clock socket
-      // teardown); harness bots only leave at their own MatchEnd, where the flag suffices.
+      // nothing is sent into the shared session. Two-process (task #35 defect fix): the
+      // concede goes through the NORMAL scheduled-action lane — exactly like any bot
+      // command — so BOTH sims execute the {87,0} at the same deterministic frame and the
+      // leaver's own sim marks itself left/defeated. The old path (send_leave_game +
+      // final_sync) executed only on the peer, at arrival time, and the peer's
+      // post-action cleanup killed the connection — fabricated {87,6} drops then let a
+      // DEFEATED side declare itself victorious (dual-battery seed-606 double-win; the
+      // task-#29 tail drift). The launcher's end grace keeps the sync pumping so the
+      // scheduled leave lands in the leaver's sim after its own gameOver flag.
       if (viewer == 0 && !vars.is_replay && !secondary_client) {
-        sync_funcs.leave_game(server);
+        const uint8_t leave_action[2] = { 87, 0 };
+        input_action(0, leave_action, 2);
       }
     }
 
@@ -2450,6 +2453,109 @@ Unit Unit::nextGatherer() const
 int Unit::isBlind() const
 {
   return u->blinded_by;
+}
+
+void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
+{
+  std::memset(dst, 0, sizeof(*dst));
+  const bwgame::unit_t* p = u;
+  dst->pos_x = p->position.x;
+  dst->pos_y = p->position.y;
+  const bwgame::sprite_t* s = p->sprite;
+  dst->sprite = (u64)(uintptr_t)s;
+  if (s)
+  {
+    dst->sprite_visibility = (s32)s->visibility_flags;
+    const bwgame::image_t* im = s->main_image;
+    dst->main_image = (u64)(uintptr_t)im;
+    if (im)
+    {
+      dst->image_anim = (s32)im->iscript_state.animation;
+      dst->image_frameset = (s32)im->frame_index_base;
+    }
+  }
+  dst->unit_type = (u64)(uintptr_t)p->unit_type;
+  dst->owner = p->owner;
+  dst->order_type = (u64)(uintptr_t)p->order_type;
+  dst->sec_order_type = (u64)(uintptr_t)p->secondary_order_type;
+  dst->main_order_timer = p->main_order_timer;
+  dst->ground_cd = p->ground_weapon_cooldown;
+  dst->air_cd = p->air_weapon_cooldown;
+  dst->spell_cd = p->spell_cooldown;
+  dst->status_flags = p->status_flags;
+  dst->carrying_flags = p->carrying_flags;
+  dst->movement_state = p->movement_state;
+  dst->movement_flags = (s32)p->movement_flags;
+  dst->detected_flags = p->detected_flags;
+  dst->hp_raw = (s32)p->hp.raw_value;
+  dst->shield_raw = (s32)p->shield_points.raw_value;
+  dst->energy_raw = (s32)p->energy.raw_value;
+  dst->heading = (s32)p->heading.raw_value;
+  dst->vel_x = (s32)p->velocity.x.raw_value;
+  dst->vel_y = (s32)p->velocity.y.raw_value;
+  dst->mt_x = p->move_target.pos.x;
+  dst->mt_y = p->move_target.pos.y;
+  dst->mt_unit = (u64)(uintptr_t)p->move_target.unit;
+  dst->ot_x = p->order_target.pos.x;
+  dst->ot_y = p->order_target.pos.y;
+  dst->ot_unit = (u64)(uintptr_t)p->order_target.unit;
+  dst->subunit = (u64)(uintptr_t)p->subunit;
+  dst->connected_unit = (u64)(uintptr_t)p->connected_unit;
+  dst->current_build_unit = (u64)(uintptr_t)p->current_build_unit;
+  dst->kill_count = p->kill_count;
+  dst->acid_spore_count = p->acid_spore_count;
+  dst->parasite_flags = p->parasite_flags;
+  dst->blinded_by = p->blinded_by;
+  dst->storm_timer = p->storm_timer;
+  dst->remove_timer = p->remove_timer;
+  dst->dm_timer = p->defensive_matrix_timer;
+  dst->dm_hp_raw = (s32)p->defensive_matrix_hp.raw_value;
+  dst->stim_timer = p->stim_timer;
+  dst->ensnare_timer = p->ensnare_timer;
+  dst->lockdown_timer = p->lockdown_timer;
+  dst->irradiate_timer = p->irradiate_timer;
+  dst->stasis_timer = p->stasis_timer;
+  dst->plague_timer = p->plague_timer;
+  dst->maelstrom_timer = p->maelstrom_timer;
+  dst->remaining_build_time = p->remaining_build_time;
+  dst->build_queue_size = (u32)p->build_queue.size();
+  for (size_t i = 0; i != p->build_queue.size() && i != 5; ++i)
+    dst->build_queue[i] = (u64)(uintptr_t)p->build_queue[i];
+  const bwgame::unit_t* su = p->subunit;
+  if (su)
+  {
+    dst->sub_present = 1;
+    dst->sub_ground_cd = su->ground_weapon_cooldown;
+    dst->sub_air_cd = su->air_weapon_cooldown;
+    const bwgame::sprite_t* ss = su->sprite;
+    dst->sub_sprite = (u64)(uintptr_t)ss;
+    if (ss)
+    {
+      const bwgame::image_t* sim = ss->main_image;
+      dst->sub_main_image = (u64)(uintptr_t)sim;
+      if (sim)
+      {
+        dst->sub_anim = (s32)sim->iscript_state.animation;
+        dst->sub_frameset = (s32)sim->frame_index_base;
+      }
+    }
+  }
+  // Raw copies of the type-specific blocks: every union/worker/building-derived read
+  // (resource counts, gather queue, addon/rally/silo/nydus links, fighter parent, mine
+  // counts, hangar counts) is covered verbatim without per-type logic.
+  constexpr size_t kUnion = sizeof(bwgame::unit_t{}.vulture) > sizeof(bwgame::unit_t{}.carrier)
+                              ? sizeof(bwgame::unit_t{}.vulture) : sizeof(bwgame::unit_t{}.carrier);
+  constexpr size_t kUnion2 = kUnion > sizeof(bwgame::unit_t{}.fighter) ? kUnion : sizeof(bwgame::unit_t{}.fighter);
+  constexpr size_t kUnion3 = kUnion2 > sizeof(bwgame::unit_t{}.beacon) ? kUnion2 : sizeof(bwgame::unit_t{}.beacon);
+  constexpr size_t kUnion4 = kUnion3 > sizeof(bwgame::unit_t{}.ghost) ? kUnion3 : sizeof(bwgame::unit_t{}.ghost);
+  constexpr size_t kWorker = sizeof(bwgame::unit_t{}.worker);
+  constexpr size_t kBuilding = sizeof(bwgame::unit_t{}.building);
+  static_assert(kUnion4 + kWorker + kBuilding <= sizeof(dst->raw_blocks),
+                "MirrorFingerprint::raw_blocks too small for unit_t blocks");
+  u8* b = dst->raw_blocks;
+  std::memcpy(b, &p->vulture, kUnion4); b += kUnion4;
+  std::memcpy(b, &p->worker, kWorker); b += kWorker;
+  std::memcpy(b, &p->building, kBuilding);
 }
 
 int Unit::resourceType() const

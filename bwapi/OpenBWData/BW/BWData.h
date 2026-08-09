@@ -347,6 +347,37 @@ struct Player {
   void setGas(int value);
 };
 
+// Mirror fingerprint (sb-perf mirror cut 2): the exact engine-side inputs consumed by
+// UnitImpl::updateInternalData()/updateData(). One fill call replaces the ~100 accessor
+// crossings those functions make; byte-equal fingerprints across consecutive frames prove
+// their outputs identical, so the recompute can be skipped (guard logic lives BWAPI-side).
+// raw_blocks carries verbatim copies of the type-specific union, worker and building
+// blocks so every union-derived read is covered without per-type field logic. Trivially
+// copyable, zero-filled before fill — memcmp-comparable including padding.
+struct MirrorFingerprint {
+  s32 pos_x, pos_y;
+  u64 sprite; s32 sprite_visibility;
+  u64 main_image; s32 image_anim, image_frameset;
+  u64 unit_type; s32 owner;
+  u64 order_type, sec_order_type;
+  s32 main_order_timer, ground_cd, air_cd, spell_cd;
+  s32 status_flags, carrying_flags, movement_state, movement_flags;
+  u32 detected_flags;
+  s32 hp_raw, shield_raw, energy_raw;
+  s32 heading, vel_x, vel_y;
+  s32 mt_x, mt_y; u64 mt_unit;
+  s32 ot_x, ot_y; u64 ot_unit;
+  u64 subunit, connected_unit, current_build_unit;
+  s32 kill_count, acid_spore_count, parasite_flags, blinded_by, storm_timer;
+  s32 remove_timer, dm_timer, dm_hp_raw, stim_timer, ensnare_timer;
+  s32 lockdown_timer, irradiate_timer, stasis_timer, plague_timer, maelstrom_timer;
+  s32 remaining_build_time;
+  u64 build_queue[5]; u32 build_queue_size;
+  u8 sub_present; s32 sub_ground_cd, sub_air_cd;
+  u64 sub_sprite, sub_main_image; s32 sub_anim, sub_frameset;
+  u8 raw_blocks[320];
+};
+
 struct Unit {
   bwgame::unit_t* u = nullptr;
   openbwapi_impl* impl = nullptr;
@@ -409,6 +440,7 @@ struct Unit {
   int gatherQueueCount() const;
   Unit nextGatherer() const;
   int isBlind() const;
+  void mirrorFingerprint(MirrorFingerprint* dst) const;
   int resourceType() const;
   int parasiteFlags() const;
   int stormTimer() const;

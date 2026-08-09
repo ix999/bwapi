@@ -274,6 +274,22 @@ int main() {
         }
         h->update();
         h->onGameEnd();
+        // Two-process end grace (defect fix, task #35): a process that exits the moment its
+        // own sim reads game-over strands the peer — the first finisher's socket closes
+        // while the other sim still needs its remaining frames, the starved sync fires
+        // player_dropped mid-victory-sweep, and the DEFEATED side declares itself
+        // victorious via opponents==0 (dual battery seed-606 double-win flake; also the
+        // task-#29 SBACT tail drift). Pump the sync a fixed frame budget past game-over so
+        // BOTH sims complete the identical decided timeline — the dual-host semantics.
+        // Bot-invisible: no update()/callbacks here, END lines already printed.
+        {
+          static const int endGrace = [] {
+            const char* v = std::getenv("SB_TWO_PROCESS_END_GRACE");
+            return v && *v ? std::atoi(v) : 240;
+          }();
+          for (int i = 0; i < endGrace && !h->bwgame.gameClosed(); ++i)
+            h->bwgame.nextFrame();
+        }
         h->bwgame.leaveGame();
       } while (!h->bwgame.gameClosed() && h->autoMenuManager.autoMenuRestartGame != "" && h->autoMenuManager.autoMenuRestartGame != "OFF");
       return 0;

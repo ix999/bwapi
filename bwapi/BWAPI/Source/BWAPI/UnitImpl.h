@@ -308,7 +308,20 @@ namespace BWAPI
       bool wasCompleted = false;
       bool wasAccessible = false;
       bool wasVisible = false;
-      
+
+      // Mirror dirty-skip (sb-perf mirror cut 2): engine-side fingerprint of every input
+      // updateInternalData()/updateData() read. Both recomputes are skipped only after the
+      // fingerprint has been byte-identical for two consecutive frames (the second frame
+      // converges history fields like lastHitPoints) and no cross-unit read applies.
+      BW::MirrorFingerprint mirrorSnap{};
+      bool mirrorSnapValid = false;
+      u8 mirrorStreak = 0;
+      bool mirrorSkip = false;
+      bool mirrorVerify = false;
+      UnitData mirrorVerifySnap{};
+      bool mirrorSkipEligible(BW::Unit& o) const;
+      static bool mirrorVerifyMode();
+
       Unitset connectedUnits;
       Unitset loadedUnits;
 

@@ -88,6 +88,19 @@ void GameImpl::update()
     }
     if ( allDone)
     {
+      // SB_MATCHEND_LOG: print-only probe — the exact inputs behind the isWinner verdict,
+      // for the two-process endgame winner-flag race (dual battery seed-606 flake).
+      static const bool matchendLog = [] {
+        const char* v = std::getenv("SB_MATCHEND_LOG");
+        return v && *v && *v != '0';
+      }();
+      if (matchendLog && this->BWAPIPlayer)
+        std::printf("SBMEND f=%d win=%d vict=%d defeat=%d left=%d gameOver=%d\n",
+                    this->frameCount, (int)win,
+                    (int)this->BWAPIPlayer->isVictorious(),
+                    (int)this->BWAPIPlayer->isDefeated(),
+                    (int)this->BWAPIPlayer->leftGame(),
+                    (int)this->bwgame.gameOver());
       if (win)
         rn_GameResult = "win";
       this->calledMatchEnd = true;
