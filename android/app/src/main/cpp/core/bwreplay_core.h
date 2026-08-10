@@ -40,6 +40,7 @@ struct Status {
 	bool replay_loaded = false;
 	bool done = false;
 	bool quit_requested = false;
+	double zoom = 1.0;
 };
 
 class Core {
@@ -74,6 +75,9 @@ public:
 	void cmd_seek_frame(int frame);
 	void cmd_seek_fraction(double fraction);
 	void cmd_pan(int dx, int dy);
+	// Magnification. 1.0 draws the game at native resolution; higher values
+	// enlarge it, which is what makes the view legible on a phone screen.
+	void cmd_set_zoom(double zoom);
 	void cmd_quit();
 
 	// Any thread.

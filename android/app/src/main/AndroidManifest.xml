@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The app runs entirely on the device. There is deliberately no INTERNET
+    permission: replays and the imported game archives never leave the phone,
+    and the engine has no reason to reach the network.
+
+    No storage permissions either. Everything is imported through the system
+    document picker, which grants access per file without a broad grant.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.OpenBWReplays">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Landscape only: BW's viewport is a wide one, and SDL recreates its
+            surface on rotation, which would restart playback.
+
+            The configChanges list matches SDL's own sample project so the
+            activity is not torn down for changes SDL handles itself.
+        -->
+        <activity
+            android:name=".ViewerActivity"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Theme.OpenBWReplays.Viewer" />
+
+    </application>
+
+</manifest>

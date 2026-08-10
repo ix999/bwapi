@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenBW Replays</string>
+
+    <string name="setup_title">One-time setup</string>
+    <string name="setup_body">This app plays Brood War replays using the OpenBW engine, but it cannot include Blizzard\'s game data. Import the three archives from a StarCraft: Brood War 1.16.1 installation to continue. They are copied into the app and never leave your device.</string>
+    <string name="setup_import">Import game files</string>
+    <string name="setup_missing">Still needed: %1$s</string>
+    <string name="setup_wrong_files">None of those were game archives. Pick %1$s.</string>
+
+    <string name="replays_import">Add replays</string>
+    <string name="replays_empty">No replays yet. Use \"Add replays\" to import .rep files.</string>
+    <string name="replay_detail">%1$s · %2$s</string>
+    <string name="import_failed">Import failed: %1$s</string>
+    <string name="import_not_replays">No .rep files were selected.</string>
+
+    <string name="delete">Delete</string>
+    <string name="delete_confirm">Remove this replay from the library?</string>
+
+    <string name="viewer_time">%1$s / %2$s</string>
+    <string name="viewer_error">Playback failed: %1$s</string>
+    <string name="viewer_play_pause">Play or pause</string>
+    <string name="viewer_zoom_in">Zoom in</string>
+    <string name="viewer_zoom_out">Zoom out</string>
+</resources>

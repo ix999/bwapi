@@ -54,30 +54,46 @@ struct SavedState {
 	std::array<apm_t, 12> apm;
 };
 
-// One snapshot per ~10 seconds of game time.
+// One snapshot per ~10 seconds of game time, to begin with.
 constexpr int kSaveIntervalFrames = 10 * 1000 / 42;
+
+// A full state copy is multiple megabytes, so unlike gfxtest.cpp (which keeps
+// every snapshot and only frees under a malloc failure handler) playback caps
+// how many it holds. On reaching the cap the interval doubles and the now
+// off-interval snapshots are dropped, which halves memory while keeping the
+// remaining snapshots evenly spread over the replay. Seeking stays bounded:
+// the worst case is re-simulating one interval's worth of frames.
+constexpr size_t kMaxSnapshots = 24;
 
 // Wall-clock budget for a single tick, so seeking across a long replay stays
 // responsive instead of blocking the render thread until it arrives.
 constexpr auto kTickBudget = std::chrono::milliseconds(50);
 
 enum class CmdType {
+	none,
 	set_paused,
 	toggle_paused,
 	set_speed,
 	seek_frame,
 	seek_fraction,
 	pan,
+	set_zoom,
 	quit,
 };
 
 struct Cmd {
-	CmdType type;
+	CmdType type = CmdType::none;
 	bool flag = false;
 	double value = 0.0;
 	int x = 0;
 	int y = 0;
 };
+
+// Native BW pixels are far too small on a phone, so the view is magnified by
+// default. Bounds keep view_width/view_height from collapsing to zero.
+constexpr double kMinZoom = 0.5;
+constexpr double kMaxZoom = 8.0;
+constexpr double kDefaultZoom = 2.0;
 
 using Loader = data_loading::data_files_loader<data_loading::mpq_file<>>;
 
@@ -91,9 +107,11 @@ struct Core::Impl {
 	std::chrono::high_resolution_clock::time_point last_tick;
 
 	std::map<int, std::unique_ptr<SavedState>> saved_states;
+	int save_interval = kSaveIntervalFrames;
 
 	bool initialized = false;
 	bool replay_loaded = false;
+	double zoom = kDefaultZoom;
 
 	mutable std::mutex mutex;
 	std::deque<Cmd> commands;
@@ -114,6 +132,8 @@ struct Core::Impl {
 		}
 		for (const Cmd& c : pending) {
 			switch (c.type) {
+			case CmdType::none:
+				break;
 			case CmdType::set_paused:
 				ui->is_paused = c.flag;
 				break;
@@ -134,7 +154,13 @@ struct Core::Impl {
 				ui->replay_frame = clamp_frame((int)(ui->replay_st.end_frame * c.value));
 				break;
 			case CmdType::pan:
-				ui->screen_pos = ui->screen_pos + xy(c.x, c.y);
+				// Drag distances arrive in screen pixels; convert to map pixels
+				// so panning tracks the finger at any zoom level.
+				ui->screen_pos = ui->screen_pos + xy((int)(c.x / zoom), (int)(c.y / zoom));
+				break;
+			case CmdType::set_zoom:
+				zoom = std::max(kMinZoom, std::min(kMaxZoom, c.value));
+				apply_view_scale();
 				break;
 			case CmdType::quit:
 				ui->window_closed = true;
@@ -143,22 +169,49 @@ struct Core::Impl {
 		}
 	}
 
+	// engine thread. ui_functions::resize() hardcodes a 1:1 view scale, so
+	// re-derive the view dimensions from the current zoom afterwards. Larger
+	// view_scale means fewer game pixels across the window, i.e. bigger
+	// sprites. view_scale is recomputed from the rounded view_width so the
+	// scale the renderer uses matches the area it iterates over exactly.
+	void apply_view_scale() {
+		if (!ui) return;
+		ui->view_scale = fp16::from_raw((int)(zoom * 65536.0));
+		ui->view_width = (fp16::integer(ui->screen_width) / ui->view_scale).integer_part();
+		ui->view_height = (fp16::integer(ui->screen_height) / ui->view_scale).integer_part();
+		if (ui->view_width == 0) ui->view_width = 1;
+		if (ui->view_height == 0) ui->view_height = 1;
+		ui->view_scale = (ufp16::integer(ui->screen_width) / ui->view_width).as_signed();
+	}
+
 	int clamp_frame(int frame) const {
 		if (frame < 0) return 0;
 		if (frame > ui->replay_st.end_frame) return ui->replay_st.end_frame;
 		return frame;
 	}
 
+	// engine thread. Halve the snapshot count by doubling the interval and
+	// dropping everything that no longer lands on it. Frame 0 is a multiple of
+	// every interval, so the replay start is never evicted.
+	void thin_snapshots() {
+		save_interval *= 2;
+		for (auto it = saved_states.begin(); it != saved_states.end();) {
+			if (it->first % save_interval != 0) it = saved_states.erase(it);
+			else ++it;
+		}
+	}
+
 	// engine thread. Advance exactly one simulation frame, snapshotting first
 	// if this frame is a checkpoint.
 	void next_frame() {
-		if (ui->st.current_frame == 0 || ui->st.current_frame % kSaveIntervalFrames == 0) {
+		if (ui->st.current_frame % save_interval == 0) {
 			if (saved_states.find(ui->st.current_frame) == saved_states.end()) {
 				auto v = std::make_unique<SavedState>();
 				v->st = copy_state(ui->st);
 				v->action_st = copy_state(ui->action_st, ui->st, v->st);
 				v->apm = ui->apm;
 				saved_states[ui->st.current_frame] = std::move(v);
+				if (saved_states.size() > kMaxSnapshots) thin_snapshots();
 			}
 		}
 		ui->replay_functions::next_frame();
@@ -232,6 +285,7 @@ struct Core::Impl {
 		published.replay_loaded = replay_loaded;
 		published.done = ui ? ui->is_done() : false;
 		published.quit_requested = ui ? ui->window_closed : false;
+		published.zoom = zoom;
 	}
 };
 
@@ -261,6 +315,7 @@ bool Core::init(const std::string& data_path, int width, int height, std::string
 
 		ui.wnd.create("OpenBW Replays", 0, 0, width, height);
 		ui.resize(width, height);
+		impl_->apply_view_scale();
 
 		impl_->last_tick = impl_->clock.now();
 		impl_->initialized = true;
@@ -281,6 +336,7 @@ bool Core::load_replay(const uint8_t* data, size_t len, std::string* err) {
 	}
 	try {
 		impl_->saved_states.clear();
+		impl_->save_interval = kSaveIntervalFrames;
 		impl_->ui->reset();
 		impl_->ui->load_replay_data(data, len);
 		impl_->ui->set_image_data();
@@ -321,6 +377,7 @@ bool Core::load_replay(const uint8_t* data, size_t len, std::string* err) {
 void Core::resize(int width, int height) {
 	if (!impl_->ui) return;
 	impl_->ui->resize(width, height);
+	impl_->apply_view_scale();
 }
 
 bool Core::tick() {
@@ -328,7 +385,14 @@ bool Core::tick() {
 	try {
 		impl_->apply_commands();
 		if (impl_->replay_loaded) impl_->advance();
+		size_t was_width = impl_->ui->screen_width;
+		size_t was_height = impl_->ui->screen_height;
 		impl_->ui->update();
+		// update() handles window resize events itself by calling resize(),
+		// which restores a 1:1 view scale; re-apply the zoom when that happens.
+		if (impl_->ui->screen_width != was_width || impl_->ui->screen_height != was_height) {
+			impl_->apply_view_scale();
+		}
 		impl_->publish();
 		return !impl_->ui->window_closed;
 	} catch (const std::exception& e) {
@@ -367,6 +431,12 @@ void Core::cmd_pan(int dx, int dy) {
 	Cmd c{CmdType::pan};
 	c.x = dx;
 	c.y = dy;
+	impl_->push(c);
+}
+
+void Core::cmd_set_zoom(double zoom) {
+	Cmd c{CmdType::set_zoom};
+	c.value = zoom;
 	impl_->push(c);
 }
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.OpenBWReplays" parent="Theme.Material3.DayNight" />
+
+    <!-- The viewer is all SDL surface, so it gets no action bar and draws dark. -->
+    <style name="Theme.OpenBWReplays.Viewer" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>
