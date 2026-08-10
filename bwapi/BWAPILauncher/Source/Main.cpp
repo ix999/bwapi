@@ -9,6 +9,9 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <map>
+#include <set>
+#include <sstream>
 
 // ---- Dual-host mode (ENGINE_OPT_DUALHOST.md): OPENBW_DUAL_HOST=1 hosts BOTH bots in this
 // process against ONE simulation — no lockstep peer, no IPC, no duplicate sim. Each bot runs
@@ -46,6 +49,59 @@ void lane_signal_go(bot_lane_t& lane, bool quit = false, bool finish = false) {
     lane.finish = finish;
   }
   lane.cv.notify_all();
+}
+
+// ---- Per-viewer policy channel (per-side P1_POLICY/P2_POLICY in one process, NO bot changes) ----
+//
+// Two-process games apply P1_POLICY to process 1 and P2_POLICY to process 2 — each a space-separated
+// list of KEY=VALUE env assignments (e.g. "SBBOT_GENOME=/path SBBOT_QA_FORCE_OPERATION=nuke"). In
+// dual-host both bots share one process env, so the runner passes them as SBBOT_P1_POLICY /
+// SBBOT_P2_POLICY and this applies the ACTIVE viewer's set to the real env immediately before that
+// viewer's dispatch. Because per-frame dispatch is strictly sequential (bot 0 completes before bot 1
+// starts) and each viewer is a distinct module image with its own statics, every getenv the bot
+// makes during its dispatch returns its own value, and lazily-cached `static const … = getenv(…)`
+// reads cache the correct per-viewer value. No bot code changes; the runner interface is unchanged.
+//
+// Keys present in EITHER side form the managed union: for the active viewer, each key is set to that
+// side's value or UNSET if that side does not name it — so a key on one side never leaks to the
+// other. Config only changes which commands a bot issues; it cannot affect sim determinism or a
+// viewer's fog, so a symmetric game (equal or empty policies) is byte-identical to before, and a
+// differentiated game matches two-process with the same per-side policies (gated by
+// dual-equivalence.sh).
+struct ViewerPolicies {
+  std::array<std::map<std::string, std::string>, 2> side;
+  std::set<std::string> keys;   // union of keys across both sides
+  bool active = false;
+};
+
+ViewerPolicies parse_viewer_policies() {
+  ViewerPolicies vp;
+  const char* names[2] = { "SBBOT_P1_POLICY", "SBBOT_P2_POLICY" };
+  for (int v = 0; v < 2; ++v) {
+    const char* raw = std::getenv(names[v]);
+    if (!raw || !*raw) continue;
+    std::istringstream in(raw);
+    std::string tok;
+    while (in >> tok) {
+      const auto eq = tok.find('=');
+      if (eq == std::string::npos) continue;
+      const std::string key = tok.substr(0, eq);
+      vp.side[v][key] = tok.substr(eq + 1);
+      vp.keys.insert(key);
+      vp.active = true;
+    }
+  }
+  return vp;
+}
+
+void apply_viewer_policy(const ViewerPolicies& vp, int viewer) {
+  if (!vp.active) return;
+  for (const std::string& key : vp.keys) {
+    const auto& m = vp.side[viewer];
+    const auto it = m.find(key);
+    if (it != m.end()) ::setenv(key.c_str(), it->second.c_str(), 1);
+    else ::unsetenv(key.c_str());   // not named on this side — never leak the other side's value
+  }
 }
 
 void lane_wait_done(bot_lane_t& lane) {
@@ -105,6 +161,9 @@ int dual_main() {
         }
         if (race1_sent && race2_sent) g0.startGame();
       });
+
+      // Per-side policy (P1_POLICY/P2_POLICY, applied per viewer before each dispatch — no bot change).
+      const ViewerPolicies viewer_policies = parse_viewer_policies();
 
       // The two bot mirrors, each owned entirely by its dispatch thread.
       bot_lane_t lanes[2];
@@ -184,6 +243,7 @@ int dual_main() {
         lane_over[i] = true;
         printf("dual: viewer %d session over f=%d\n", i, frames);
         fflush(stdout);
+        apply_viewer_policy(viewer_policies, i);
         lane_signal_go(lanes[i], false, true);
         lane_wait_done(lanes[i]);
         lanes[i].th.join();
@@ -198,11 +258,13 @@ int dual_main() {
         // has exited — while the survivor plays on to its own end (victory sweep or cap).
         bool modules_ok = true;
         if (!lane_over[0]) {
+          apply_viewer_policy(viewer_policies, 0);
           lane_signal_go(lanes[0]);
           lane_wait_done(lanes[0]);
           modules_ok = modules_ok && lanes[0].module_ok;
         }
         if (!lane_over[1]) {
+          apply_viewer_policy(viewer_policies, 1);
           lane_signal_go(lanes[1]);
           lane_wait_done(lanes[1]);
           modules_ok = modules_ok && lanes[1].module_ok;
