@@ -60,6 +60,27 @@ class ReplayStore(context: Context) {
         return Replay(target)
     }
 
+    /**
+     * Stores a replay that arrived as a byte stream rather than a document —
+     * a download, typically. [sourceName] only suggests the filename; the
+     * store still picks a non-clashing one.
+     */
+    @Throws(IOException::class)
+    fun importStream(sourceName: String, input: java.io.InputStream): Replay {
+        if (!directory.isDirectory && !directory.mkdirs()) {
+            throw IOException("could not create ${directory.absolutePath}")
+        }
+        val target = uniqueTarget(sourceName)
+        val temp = File(directory, "${target.name}.part")
+        try {
+            temp.outputStream().use { output -> input.copyTo(output) }
+            if (!temp.renameTo(target)) throw IOException("could not store ${target.name}")
+        } finally {
+            temp.delete()
+        }
+        return Replay(target)
+    }
+
     fun delete(replay: Replay): Boolean = replay.file.delete()
 
     /** Avoids clobbering an existing replay that happens to share a name. */

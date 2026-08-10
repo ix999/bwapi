@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    The app runs entirely on the device. There is deliberately no INTERNET
-    permission: replays and the imported game archives never leave the phone,
-    and the engine has no reason to reach the network.
+    Playback runs entirely on the device: the engine simulates locally and
+    never sends anything anywhere.
 
-    No storage permissions either. Everything is imported through the system
+    INTERNET exists for one job — downloading replays from a repository folder,
+    so games produced by a cloud machine reach the phone without a desktop in
+    between. It is opt-in and off by default; until it is enabled the app makes
+    no network requests at all. Nothing is ever uploaded.
+
+    No storage permissions. Everything on-device is imported through the system
     document picker, which grants access per file without a broad grant.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-feature
         android:name="android.hardware.touchscreen"

@@ -6,21 +6,21 @@ viewer. See [android/README.md](android/README.md) for the app.
 ## Where generated replays go
 
 When asked to create replays, write them to the retail replay-watch folder on
-Adam's Mac, so StarCraft and the phone both pick them up without a second copy
+the Mac, so StarCraft and the phone both pick them up without a second copy
 step:
 
 ```
-/Users/adamsibson/Downloads/sc1161/maps/replays
+~/Downloads/sc1161/maps/replays
 ```
 
 Related paths, for reference:
 
 | What | Path |
 | --- | --- |
-| Retail StarCraft 1.16.1 install | `/Users/adamsibson/Downloads/sc1161` |
-| **Replay destination** | `/Users/adamsibson/Downloads/sc1161/maps/replays` |
-| Retail automatic replays | `/Users/adamsibson/Downloads/sc1161/maps/replays/Autoreplay` |
-| OpenBW sim replay output | `/Users/adamsibson/WebstormProjects/starcraft-broodwar-bot/build/replays` |
+| Retail StarCraft 1.16.1 install | `~/Downloads/sc1161` |
+| **Replay destination** | `~/Downloads/sc1161/maps/replays` |
+| Retail automatic replays | `~/Downloads/sc1161/maps/replays/Autoreplay` |
+| OpenBW sim replay output | `~/WebstormProjects/starcraft-broodwar-bot/build/replays` |
 
 Notes:
 

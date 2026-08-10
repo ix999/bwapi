@@ -92,6 +92,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Fetches replays committed by a cloud machine. Network work, so it runs off
+     * the main thread and refreshes the list when it lands.
+     */
+    private fun syncCloudFeed() {
+        if (!cloudFeed.isEnabled) return
+        Thread {
+            val result = cloudFeed.sync(replayStore)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (result.imported > 0) {
+                    toast(
+                        resources.getQuantityString(
+                            R.plurals.synced_replays, result.imported, result.imported
+                        )
+                    )
+                    refresh()
+                }
+                result.error?.let { toast(getString(R.string.cloud_failed, it)) }
+            }
+        }.start()
+    }
+
+    /**
      * Opens the newest replay straight away, so launching the app puts you in a
      * game rather than in a file list.
      *
