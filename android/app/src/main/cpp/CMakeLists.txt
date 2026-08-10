@@ -26,14 +26,16 @@ if (NOT EXISTS "${OPENBW_DIR}/bwgame.h")
   message(FATAL_ERROR "openbw submodule missing. Run: git submodule update --init --recursive")
 endif()
 
-# The viewer needs video only. Turning the rest off keeps the .so small and
-# avoids pulling in the HIDAPI/joystick Java plumbing the app does not use.
+# Build SDL with its Android defaults. Trimming subsystems looks tempting
+# because the viewer only needs video, but SDL's Android build does not support
+# it: src/core/android/SDL_android.c calls Android_AddHaptic/Android_RemoveHaptic
+# unguarded, so SDL_HAPTIC=OFF fails to compile. The same shape of problem
+# applies to SDL_HIDAPI, whose HIDDeviceManager.java (compiled here along with
+# the rest of SDL's Java sources) binds to native methods that would no longer
+# exist. Only the shared/static/test switches are safe to set.
 set(SDL_SHARED ON CACHE BOOL "" FORCE)
 set(SDL_STATIC OFF CACHE BOOL "" FORCE)
 set(SDL_TEST OFF CACHE BOOL "" FORCE)
-set(SDL_HIDAPI OFF CACHE BOOL "" FORCE)
-set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
-set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SDL_DIR}" sdl2 EXCLUDE_FROM_ALL)
 
 add_library(bwreplay SHARED
