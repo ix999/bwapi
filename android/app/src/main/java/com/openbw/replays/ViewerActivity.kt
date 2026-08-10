@@ -145,6 +145,25 @@ class ViewerActivity : SDLActivity() {
             .show()
     }
 
+    /**
+     * The viewer is `singleTask` — SDL does not support two live instances — so
+     * launching it again while it is already running reuses this instance and
+     * delivers the new intent here rather than restarting SDL_main. Without
+     * this, picking a replay from the library after leaving the viewer with
+     * Home would silently keep playing the previous one.
+     */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+
+        val path = newIntent.getStringExtra(EXTRA_REPLAY_PATH).orEmpty()
+        if (path.isEmpty()) return
+
+        currentReplayName = File(path).nameWithoutExtension
+        titleLabel.text = currentReplayName
+        NativeBridge.loadReplay(path)
+    }
+
     override fun onStart() {
         super.onStart()
         handler.post(pollStatus)
