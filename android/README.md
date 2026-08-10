@@ -9,15 +9,20 @@ archives never leave the device.
 
 ## Status
 
-The app source is complete, and the engine integration is verified: the
-playback core loads retail 1.16.1 MPQs, parses real replays, plays, seeks,
-rewinds and pauses correctly, across a range of maps and replay lengths
-(5k–45k frames). Peak memory stays flat at ~86 MB whether a run simulates half
-the replay or 95% of it, which is the snapshot cap doing its job.
+**The APK builds**, on CI, for `arm64-v8a`, `armeabi-v7a` and `x86_64` — about
+11 MB for a debug build. Download it from the Actions tab; see
+[Building](#building).
 
-It has **not been compiled into an APK yet** — that needs an Android SDK/NDK;
-see [Building](#building). The Kotlin/Android layer is therefore unexercised;
-what is proven is everything below the JNI boundary.
+The engine integration is verified too: the playback core loads retail 1.16.1
+MPQs, parses real replays, plays, seeks, rewinds and pauses correctly, across a
+range of maps and replay lengths (5k–45k frames). Peak memory stays flat at
+~86 MB whether a run simulates half the replay or 95% of it, which is the
+snapshot cap doing its job.
+
+What is **not** verified is the app running on a device. Compiling proves the
+Kotlin, the JNI signatures and the native build all line up; it says nothing
+about whether the surface renders, touches land where they should, or the
+importers behave against a real SAF provider. That needs a phone.
 
 ## Requirements
 
@@ -57,7 +62,17 @@ reproducible and works offline once cloned:
 > `.github/workflows/android.yml` builds the APK on a GitHub-hosted runner,
 > which has the SDK and NDK preinstalled, and uploads it as a build artifact.
 > Trigger it from the Actions tab (`workflow_dispatch`) or by pushing a change
-> under `android/`.
+> under `android/`. This is the path the APK is currently built through.
+
+### Don't trim SDL's subsystems
+
+It is tempting to switch off the SDL subsystems the viewer never uses, but
+SDL's Android build does not support it. `src/core/android/SDL_android.c` calls
+`Android_AddHaptic`/`Android_RemoveHaptic` unguarded, so `SDL_HAPTIC=OFF` fails
+to compile. `SDL_HIDAPI=OFF` is worse: it compiles, then fails at runtime,
+because SDL's `HIDDeviceManager.java` is built from the same submodule and
+binds to native methods that no longer exist. Only the shared/static/test
+switches are safe to set.
 
 ## Game data
 
