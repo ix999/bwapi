@@ -39,6 +39,12 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="@string/setup_import" />
+
+        <Button
+            android:id="@+id/fetch_game_data"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/setup_fetch" />
     </LinearLayout>
 
     <Button

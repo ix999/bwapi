@@ -139,6 +139,12 @@ hash-sharded `replays/library/` corpus as well as flat files. Downloads go
 through the contents API with a raw `Accept` header, because
 `raw.githubusercontent.com` does not reliably honour a token on a private repo.
 
+The same connection can fetch the **game data**. If the repo holds the three
+mpqs, **Download from repo** on the setup card pulls whichever are missing,
+instead of moving ~90 MB onto the phone by hand. It is a button rather than
+something automatic, given the size, and the archives stay in the private repo
+rather than being redistributed.
+
 This is the app's **only** outbound traffic, it is off until enabled, and
 nothing is ever uploaded. Replays belong in the private bot repo rather than in
 this public one — they expose build orders.

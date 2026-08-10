@@ -64,6 +64,36 @@ class GameData(context: Context) {
         return canonical
     }
 
+    /**
+     * Stores an archive that arrived as a stream rather than a document — a
+     * download from the private repo, typically. [sourceName] is matched against
+     * [CANONICAL_NAMES] the same way an imported file is, so capitalisation in
+     * the source does not matter.
+     *
+     * Returns the canonical name stored, or null if this is not one of the
+     * archives the engine needs.
+     */
+    @Throws(IOException::class)
+    fun importStream(sourceName: String, input: java.io.InputStream): String? {
+        val canonical = CANONICAL_NAMES.firstOrNull { it.equals(sourceName, ignoreCase = true) }
+            ?: return null
+
+        if (!directory.isDirectory && !directory.mkdirs()) {
+            throw IOException("could not create ${directory.absolutePath}")
+        }
+
+        val target = File(directory, canonical)
+        val temp = File(directory, "$canonical.part")
+        try {
+            temp.outputStream().use { output -> input.copyTo(output) }
+            if (!hasMpqSignature(temp)) throw IOException("$sourceName is not an MPQ archive")
+            if (!temp.renameTo(target)) throw IOException("could not store $canonical")
+        } finally {
+            temp.delete()
+        }
+        return canonical
+    }
+
     fun clear() {
         CANONICAL_NAMES.forEach { File(directory, it).delete() }
     }

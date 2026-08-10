@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.importReplays.setOnClickListener { pickReplays.launch(arrayOf("*/*")) }
         binding.cloudFeed.setOnClickListener { showCloudFeedDialog() }
+        binding.fetchGameData.setOnClickListener { fetchGameDataFromRepo() }
         binding.watchFolder.setOnClickListener {
             if (watchedFolder.isConfigured) {
                 confirmStopWatching()
@@ -117,6 +118,28 @@ class MainActivity : AppCompatActivity() {
                     refresh()
                 }
                 result.error?.let { toast(getString(R.string.cloud_failed, it)) }
+            }
+        }.start()
+    }
+
+    /**
+     * Pulls the StarCraft archives from the configured repository, so a new
+     * phone does not need ~90 MB moved onto it by hand. Explicit rather than
+     * automatic, because of the size.
+     */
+    private fun fetchGameDataFromRepo() {
+        toast(getString(R.string.setup_fetching))
+        binding.fetchGameData.isEnabled = false
+        Thread {
+            val result = cloudFeed.fetchGameData(gameData)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                binding.fetchGameData.isEnabled = true
+                when {
+                    result.error != null -> toast(getString(R.string.cloud_failed, result.error))
+                    gameData.isComplete -> toast(getString(R.string.setup_fetched))
+                }
+                refresh()
             }
         }.start()
     }

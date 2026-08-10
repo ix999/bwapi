@@ -49,4 +49,8 @@
     <string name="cloud_token_hint">GitHub token</string>
     <string name="cloud_token_help">A private repo needs a fine-grained token with read-only Contents access to it. It is stored on this device only.</string>
     <string name="cloud_failed">Cloud sync failed: %1$s</string>
+
+    <string name="setup_fetch">Download from repo</string>
+    <string name="setup_fetching">Downloading game data — this is about 90 MB…</string>
+    <string name="setup_fetched">Game data ready</string>
 </resources>

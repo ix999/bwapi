@@ -105,23 +105,72 @@ class CloudFeed(context: Context) {
         return Result(imported, lastError)
     }
 
+    /**
+     * Downloads whichever StarCraft archives are still missing, from the same
+     * repository. Saves moving ~90 MB onto the phone by hand, and the archives
+     * stay in the private repo rather than being redistributed.
+     *
+     * Explicitly invoked rather than run on launch: this is a large download,
+     * potentially over mobile data.
+     */
+    fun fetchGameData(gameData: GameData): Result {
+        if (repo.isBlank()) return Result(0, "no repository configured")
+
+        val wanted = gameData.missing
+        if (wanted.isEmpty()) return Result(0, null)
+
+        val entries = try {
+            listBlobs { name -> wanted.any { it.equals(name, ignoreCase = true) } }
+        } catch (e: IOException) {
+            return Result(0, e.message ?: "could not reach GitHub")
+        }
+        if (entries.isEmpty()) {
+            return Result(0, "not found in $repo: ${wanted.joinToString(", ")}")
+        }
+
+        var imported = 0
+        var lastError: String? = null
+        for (entry in entries) {
+            try {
+                download(entry.path) { input -> gameData.importStream(entry.name, input) }
+                imported++
+            } catch (e: IOException) {
+                lastError = e.message
+            }
+        }
+        return Result(imported, lastError)
+    }
+
     /** Every `.rep` under [path], at any depth. */
     private fun listReplays(): List<Entry> {
+        val prefix = if (path.isEmpty()) "" else "$path/"
+        return listTree { entry ->
+            entry.path.startsWith(prefix) && entry.name.endsWith(".rep", ignoreCase = true)
+        }
+    }
+
+    /** Blobs anywhere in the tree whose filename satisfies [matches]. */
+    private fun listBlobs(matches: (String) -> Boolean): List<Entry> =
+        listTree { entry -> matches(entry.name) }
+
+    /**
+     * One recursive tree request, filtered locally. Recursive rather than a
+     * directory listing because the replay corpus is sharded by content hash,
+     * and the archives live somewhere else entirely.
+     */
+    private fun listTree(keep: (Entry) -> Boolean): List<Entry> {
         val url = URL("https://api.github.com/repos/$repo/git/trees/${encode(branch)}?recursive=1")
         val body = request(url) { it.bufferedReader().readText() }
 
         return try {
             val root = JSONObject(body)
             val tree = root.optJSONArray("tree") ?: return emptyList()
-            val prefix = if (path.isEmpty()) "" else "$path/"
             val result = mutableListOf<Entry>()
             for (i in 0 until tree.length()) {
                 val node = tree.optJSONObject(i) ?: continue
                 if (node.optString("type") != "blob") continue
-                val nodePath = node.optString("path")
-                if (!nodePath.startsWith(prefix)) continue
-                if (!nodePath.endsWith(".rep", ignoreCase = true)) continue
-                result += Entry(nodePath, node.optLong("size", -1L))
+                val entry = Entry(node.optString("path"), node.optLong("size", -1L))
+                if (keep(entry)) result += entry
             }
             if (root.optBoolean("truncated") && result.isEmpty()) {
                 throw IOException("repository tree too large to list")
