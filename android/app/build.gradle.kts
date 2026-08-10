@@ -7,6 +7,10 @@ android {
 	namespace = "com.openbw.replays"
 	compileSdk = 34
 
+	// Pinned so CI and local builds compile the native code with the same
+	// toolchain rather than whatever each machine happens to have installed.
+	ndkVersion = "27.0.12077973"
+
 	defaultConfig {
 		applicationId = "com.openbw.replays"
 		minSdk = 21

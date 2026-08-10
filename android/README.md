@@ -52,6 +52,12 @@ reproducible and works offline once cloned:
 > `Plugin [id: 'com.android.application'] was not found`, before any code is
 > compiled. Nothing in the project causes this; the host simply has to be
 > reachable.
+>
+> If you cannot reach it, don't fight it — push the branch and let CI build.
+> `.github/workflows/android.yml` builds the APK on a GitHub-hosted runner,
+> which has the SDK and NDK preinstalled, and uploads it as a build artifact.
+> Trigger it from the Actions tab (`workflow_dispatch`) or by pushing a change
+> under `android/`.
 
 ## Game data
 

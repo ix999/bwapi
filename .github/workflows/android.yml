@@ -1,0 +1,85 @@
+# Builds the replay viewer APK.
+#
+# GitHub-hosted runners ship the Android SDK and NDK preinstalled, so this
+# works without any network-policy changes on a developer machine or a
+# sandboxed agent environment. The APK is uploaded as a build artifact.
+name: Android
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - 'tools/native-test/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'tools/native-test/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SDL2 and openbw are submodules; without them the CMake configure
+          # step fails with an explicit "run git submodule update" message.
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install pinned NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openbw-replays-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  # The engine core is platform independent, so it is compiled and exercised
+  # without any Android toolchain. Playback against real game data needs the
+  # copyrighted mpqs, which are not available here, so this covers compilation
+  # and the missing-data error path only.
+  native-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install SDL2
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsdl2-dev
+
+      - name: Build desktop harness
+        run: |
+          cmake -S tools/native-test -B build-native \
+            -DOPENBW_DIR=android/third_party/openbw \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-native -j"$(nproc)"
+
+      - name: Check the missing-data error path
+        run: |
+          set +e
+          out=$(SDL_VIDEODRIVER=dummy ./build-native/bwreplay-native-test /nonexistent /nonexistent/x.rep 2>&1)
+          code=$?
+          echo "$out"
+          if [ "$code" -eq 0 ]; then echo "expected a non-zero exit"; exit 1; fi
+          echo "$out" | grep -q "Patch_rt.mpq" || { echo "expected a missing-mpq message"; exit 1; }
