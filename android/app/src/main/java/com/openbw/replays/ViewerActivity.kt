@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.SeekBar
@@ -56,8 +57,13 @@ class ViewerActivity : SDLActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val overlay = LayoutInflater.from(this).inflate(R.layout.viewer_overlay, mLayout, false)
-        mLayout.addView(overlay)
+        // Attach to the window's content view rather than SDLActivity's own
+        // mLayout field: that field is SDL implementation detail, and the
+        // content view is where SDL has already installed its surface, so the
+        // overlay lands on top of it either way.
+        val content = findViewById<ViewGroup>(android.R.id.content)
+        val overlay = LayoutInflater.from(this).inflate(R.layout.viewer_overlay, content, false)
+        content.addView(overlay)
 
         playPauseButton = overlay.findViewById(R.id.play_pause)
         seekBar = overlay.findViewById(R.id.seek_bar)
