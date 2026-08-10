@@ -34,7 +34,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # setup-gradle validates every wrapper jar in the repository by default,
+      # which trips over the sample project vendored inside the SDL submodule.
+      # That wrapper is never executed here, so validate ours explicitly
+      # instead of either trusting a third-party jar or dropping the check.
+      - name: Verify the Gradle wrapper we execute
+        run: |
+          echo "7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172  android/gradle/wrapper/gradle-wrapper.jar" \
+            | sha256sum --check --strict
+
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: false
 
       - name: Install pinned NDK and CMake
         run: |
