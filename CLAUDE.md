@@ -36,18 +36,28 @@ Notes:
 
 ## Getting replays onto the phone
 
-The app has no network permission by design, so it never fetches anything
-itself. Instead it can watch one folder and import new `.rep` files on launch,
-through the Storage Access Framework.
+Two routes, depending on where the replay was produced.
 
-Set the Mac side up once so the replay folder above syncs to the phone, then in
-the app tap **Sync from a folder…** and pick the synced folder. After that,
-every replay written to the Mac folder appears in the app the next time it is
-opened.
+**From this Mac** — the app watches one folder through the Storage Access
+Framework and imports new `.rep` files on launch. Sync the replay folder above
+with whatever tool you like, then tap **Sync from a folder…** in the app.
 
-For which sync tool to use, and why the app does not integrate with Google
-Drive directly, see
-[android/README.md](android/README.md#getting-replays-onto-the-phone).
+**From a cloud session** — there is no Mac in the loop, so commit the replay to
+the private bot repo and let the phone fetch it:
+
+```
+repo:   ix999/starcraft-broodwar-bot     (private)
+branch: with-assets                      (the branch carrying gitignored assets)
+path:   replays/                         (searched recursively)
+```
+
+Write cloud-generated replays as `replays/<descriptive-name>.rep` on that
+branch. The existing `replays/library/<shard>/<hash>.rep` corpus is picked up
+too, since the app lists the tree recursively — but content hashes make poor
+entries in the phone's picker, so name new ones properly.
+
+**Never put replays in `ix999/bwapi`.** That repo is public, and replays expose
+build orders.
 
 ## Building
 

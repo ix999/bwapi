@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/cloud_body" />
+
+        <CheckBox
+            android:id="@+id/cloud_enabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/cloud_enable" />
+
+        <EditText
+            android:id="@+id/cloud_repo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/cloud_repo_hint"
+            android:importantForAutofill="no"
+            android:inputType="textNoSuggestions"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/cloud_branch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/cloud_branch_hint"
+            android:importantForAutofill="no"
+            android:inputType="textNoSuggestions"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/cloud_path"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/cloud_path_hint"
+            android:importantForAutofill="no"
+            android:inputType="textNoSuggestions"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/cloud_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/cloud_token_hint"
+            android:importantForAutofill="no"
+            android:inputType="textPassword"
+            android:singleLine="true" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/cloud_token_help"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+</ScrollView>

@@ -3,6 +3,8 @@ package com.openbw.replays
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -13,10 +15,11 @@ import java.io.IOException
 
 /**
  * The library screen: one-time import of the StarCraft data files, then the
- * list of replays on the device.
+ * list of replays on the device, plus the two ways replays arrive on their own
+ * — a watched folder, and a repository fetched over the network.
  *
- * Everything is local. The app declares no network permission, so imported
- * files never leave the device.
+ * Playback is always local and nothing is ever uploaded. The cloud feed is the
+ * only outbound traffic the app makes, and it is off unless enabled.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -24,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gameData: GameData
     private lateinit var replayStore: ReplayStore
     private lateinit var watchedFolder: WatchedFolder
+    private lateinit var cloudFeed: CloudFeed
     private lateinit var adapter: ReplayAdapter
 
     private val pickGameData = registerForActivityResult(
@@ -52,6 +56,7 @@ class MainActivity : AppCompatActivity() {
         gameData = GameData(this)
         replayStore = ReplayStore(this)
         watchedFolder = WatchedFolder(this)
+        cloudFeed = CloudFeed(this)
 
         adapter = ReplayAdapter(
             onClick = { replay -> openReplay(replay) },
@@ -66,6 +71,7 @@ class MainActivity : AppCompatActivity() {
             pickGameData.launch(arrayOf("*/*"))
         }
         binding.importReplays.setOnClickListener { pickReplays.launch(arrayOf("*/*")) }
+        binding.cloudFeed.setOnClickListener { showCloudFeedDialog() }
         binding.watchFolder.setOnClickListener {
             if (watchedFolder.isConfigured) {
                 confirmStopWatching()
@@ -78,6 +84,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         syncWatchedFolder()
+        syncCloudFeed()
         refresh()
         maybeAutoPlayLatest()
     }
@@ -131,6 +138,36 @@ class MainActivity : AppCompatActivity() {
         startActivity(ViewerActivity.intent(this, latest.file))
     }
 
+    private fun showCloudFeedDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_cloud_feed, null)
+        val enabled = view.findViewById<CheckBox>(R.id.cloud_enabled)
+        val repo = view.findViewById<EditText>(R.id.cloud_repo)
+        val branch = view.findViewById<EditText>(R.id.cloud_branch)
+        val path = view.findViewById<EditText>(R.id.cloud_path)
+        val token = view.findViewById<EditText>(R.id.cloud_token)
+
+        enabled.isChecked = cloudFeed.isEnabled
+        repo.setText(cloudFeed.repo)
+        branch.setText(cloudFeed.branch)
+        path.setText(cloudFeed.path)
+        token.setText(cloudFeed.token)
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.cloud_title)
+            .setView(view)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                cloudFeed.repo = repo.text.toString()
+                cloudFeed.branch = branch.text.toString()
+                cloudFeed.path = path.text.toString()
+                cloudFeed.token = token.text.toString()
+                cloudFeed.isEnabled = enabled.isChecked
+                refresh()
+                syncCloudFeed()
+            }
+            .show()
+    }
+
     private fun confirmStopWatching() {
         AlertDialog.Builder(this)
             .setTitle(R.string.watch_folder_stop_title)
@@ -147,6 +184,10 @@ class MainActivity : AppCompatActivity() {
         val ready = gameData.isComplete
         binding.setupCard.visibility = if (ready) View.GONE else View.VISIBLE
         binding.importReplays.isEnabled = ready
+
+        binding.cloudFeed.text =
+            if (cloudFeed.isEnabled) getString(R.string.cloud_feed_active)
+            else getString(R.string.cloud_feed)
 
         binding.watchFolder.text = watchedFolder.displayName()
             ?.let { getString(R.string.watch_folder_active, it) }

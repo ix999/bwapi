@@ -4,8 +4,10 @@ A Brood War replay viewer that runs entirely on the phone. No server, no
 streaming, no account: the OpenBW engine is compiled into the app and simulates
 the replay locally, exactly as the desktop `gfxtest` viewer does.
 
-The app declares **no `INTERNET` permission**. Replays and imported game
-archives never leave the device.
+Playback is entirely local and **nothing is ever uploaded**. The app makes one
+kind of outbound request, and only if you turn it on: downloading replays from
+a private repository, so games produced by a cloud machine reach the phone. Off
+by default, it makes no network requests at all.
 
 ## Status
 
@@ -100,14 +102,12 @@ and that grant persists across reboots. Nothing runs in the background — a
 replay viewer does not need to sync while it is closed, and this way it costs
 no battery.
 
-Pair it with whatever already syncs that folder from your desktop. The app
-never talks to the network itself, so the sync tool is entirely your choice.
+Pair it with whatever already syncs that folder from your desktop. The app does
+no networking on this path, so the sync tool is entirely your choice.
 
-**Why there is no built-in Google Drive integration.** It would mean adding the
-`INTERNET` permission, an OAuth flow and Play Services, which trades away the
-property that makes this app simple to trust: it cannot phone home. The folder
-approach gets the same result, works with any provider, and keeps the app
-offline.
+**Why there is no Google Drive integration.** It would mean an OAuth flow and
+Play Services for no benefit over a plain folder, which works with any
+provider.
 
 **Which sync tool.** Be aware that Google Drive is the weakest option here, not
 the obvious one: the Drive Android app does not reliably expose a folder to
@@ -122,6 +122,26 @@ all. In rough order of how well they work:
 
 On the Mac side, sync the retail replay folder — see the repo's
 [CLAUDE.md](../CLAUDE.md#where-generated-replays-go) for the exact path.
+
+### From a cloud machine
+
+A folder on this phone is no use for replays produced by a cloud session
+running the bot: there is no desktop in the loop to sync them. For that, the
+app fetches directly from a **private GitHub repository**.
+
+Tap **Cloud replays…**, enable it, and give it the repo, branch, folder and a
+fine-grained token with read-only *Contents* access. The token is stored on the
+device and never shipped in the APK.
+
+The defaults point at the bot repo's `with-assets` branch. Listing uses the git
+trees API recursively, so the layout does not matter — it finds the existing
+hash-sharded `replays/library/` corpus as well as flat files. Downloads go
+through the contents API with a raw `Accept` header, because
+`raw.githubusercontent.com` does not reliably honour a token on a private repo.
+
+This is the app's **only** outbound traffic, it is off until enabled, and
+nothing is ever uploaded. Replays belong in the private bot repo rather than in
+this public one — they expose build orders.
 
 ## Starting up
 
