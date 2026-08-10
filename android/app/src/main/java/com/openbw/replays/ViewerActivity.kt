@@ -72,8 +72,8 @@ class ViewerActivity : SDLActivity() {
             speedButton.text = formatSpeed(SPEEDS[speedIndex])
         }
 
-        overlay.findViewById<ImageButton>(R.id.zoom_in).setOnClickListener { applyZoom(zoom * 1.5f) }
-        overlay.findViewById<ImageButton>(R.id.zoom_out).setOnClickListener { applyZoom(zoom / 1.5f) }
+        overlay.findViewById<Button>(R.id.zoom_in).setOnClickListener { applyZoom(zoom * 1.5f) }
+        overlay.findViewById<Button>(R.id.zoom_out).setOnClickListener { applyZoom(zoom / 1.5f) }
 
         seekBar.max = SEEK_RESOLUTION
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {

@@ -28,7 +28,7 @@
             android:id="@+id/play_pause"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/viewer_play_pause"
             android:src="@android:drawable/ic_media_pause" />
 
@@ -53,21 +53,31 @@
             android:minWidth="0dp"
             android:textColor="#FFFFFF" />
 
-        <ImageButton
+        <!--
+            Text rather than icons: the framework's +/- drawables are not
+            dependable across API levels, and these read fine at button size.
+        -->
+        <Button
             android:id="@+id/zoom_out"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/viewer_zoom_out"
-            android:src="@android:drawable/btn_minus" />
+            android:minWidth="0dp"
+            android:text="@string/viewer_zoom_out_label"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp" />
 
-        <ImageButton
+        <Button
             android:id="@+id/zoom_in"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/viewer_zoom_in"
-            android:src="@android:drawable/btn_plus" />
+            android:minWidth="0dp"
+            android:text="@string/viewer_zoom_in_label"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp" />
 
     </LinearLayout>
 

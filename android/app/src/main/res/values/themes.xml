@@ -2,8 +2,12 @@
 <resources>
     <style name="Theme.OpenBWReplays" parent="Theme.Material3.DayNight" />
 
-    <!-- The viewer is all SDL surface, so it gets no action bar and draws dark. -->
-    <style name="Theme.OpenBWReplays.Viewer" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
-    </style>
+    <!--
+        ViewerActivity extends SDLActivity, which is a plain android.app.Activity
+        rather than an AppCompatActivity. Its layout is therefore inflated with
+        the framework inflater, so the theme must be a framework one and the
+        overlay must use ?android:attr/... rather than AppCompat attributes.
+        Fullscreen because the whole surface is the game.
+    -->
+    <style name="Theme.OpenBWReplays.Viewer" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 </resources>
