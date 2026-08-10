@@ -1753,13 +1753,38 @@ namespace BWAPI
 
   };
 
-  extern thread_local Game *BroodwarPtr;
+  // sb-perf TLS access model. BWAPILIB and BWAPI are loaded at program start by the
+  // launcher, so their TLS blocks live in the STATIC TLS area and initial-exec
+  // relocations resolve even from the dlopen'd AI module. That removes the
+  // __tls_get_addr call the ELF general-dynamic model otherwise emits on EVERY Broodwar
+  // access — 11.75% of whole-process instructions on the Linux ladder profile (the Mach-O
+  // scheme has no equivalent cost, hence the ELF guard). The attribute sits on the
+  // declarations so ONLY these variables change model: a module-wide
+  // -ftls-model=initial-exec would also apply to TLS defined inside the dlopen'd module,
+  // which can exhaust glibc's static TLS surplus and break dlopen outright.
+  // Build -DSB_NO_TLS_IE to restore general-dynamic (the A/B baseline).
+#if defined(__ELF__) && !defined(SB_NO_TLS_IE)
+#define BWAPI_TLS_IE __attribute__((tls_model("initial-exec")))
+#else
+#define BWAPI_TLS_IE
+#endif
+
+  extern thread_local Game *BroodwarPtr BWAPI_TLS_IE;
 
   /// <summary>Broodwar wrapper
   class GameWrapper
   {
   private:
-    std::ostringstream ss;
+    // The text accumulator lives in a function-local thread_local (Game.cpp), not in this
+    // object. That keeps GameWrapper EMPTY, hence trivially constructible and destructible,
+    // hence `thread_local GameWrapper Broodwar` is constant-initialized and needs no TLS
+    // init wrapper: the hot `Broodwar->` path stops paying the guarded __tls_init (6.5% of
+    // process on the Linux profile). The guard is not deleted, it MOVES to the text path
+    // (<< / flush), so the saving is proportional to how cold that path stays.
+    // Consequence to know: the buffer is now per-THREAD, not per-object, so any two
+    // GameWrapper instances on one thread would share it. Sound because Broodwar is the
+    // only instance that exists — an invariant of this design, not of the type.
+    std::ostringstream &stream() const;
   public:
     /// <summary>Definition of ostream_manipulator type for convenience.</summary>
     typedef std::ostream& (*ostream_manipulator)(std::ostream&);
@@ -1773,7 +1798,7 @@ namespace BWAPI
     inline GameWrapper &operator <<(const T &in)
     {
       // Pass whatever into the stream
-      ss << in;
+      stream() << in;
       return *this;
     };
     /// @overload
@@ -1785,7 +1810,7 @@ namespace BWAPI
 
   /// <summary>The primary Game interface, used to access any Game information or perform Game
   /// actions.</summary>
-  extern thread_local GameWrapper Broodwar;
+  extern thread_local GameWrapper Broodwar BWAPI_TLS_IE;
 
 }
 

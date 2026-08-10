@@ -25,10 +25,20 @@ namespace BWAPI
 
   // Dual-host groundwork: the Broodwar binding is per-thread so two in-process bot instances
   // (each on its own dispatch thread) resolve to their own GameImpl. Single-threaded hosts see
-  // identical behaviour — one thread, one binding. The wrapper carries stream state (ss), so
-  // the wrapper object itself must be thread-local too, not just the pointer.
-  thread_local GameWrapper Broodwar;
-  thread_local Game *BroodwarPtr;
+  // identical behaviour — one thread, one binding. Both objects are constant-initialized
+  // (GameWrapper is empty; see Game.h) so no TLS init wrapper stands between a caller and
+  // `Broodwar->`; the per-thread stream state lives in stream() below.
+  thread_local GameWrapper Broodwar BWAPI_TLS_IE;
+  thread_local Game *BroodwarPtr BWAPI_TLS_IE;
+
+  std::ostringstream &GameWrapper::stream() const
+  {
+    // One accumulator per THREAD (it was per wrapper object), reached only from the text
+    // path (<< and flush), never from the hot `Broodwar->` deref. Equivalent here because
+    // Broodwar is the sole GameWrapper; see the note in Game.h.
+    static thread_local std::ostringstream ss;
+    return ss;
+  }
 
   Game *GameWrapper::operator ->() const
   {
@@ -38,7 +48,7 @@ namespace BWAPI
   GameWrapper &GameWrapper::operator <<(GameWrapper::ostream_manipulator fn)
   {
     // Pass manipulator into the stream
-    ss << fn;
+    stream() << fn;
 
     // Flush to Broodwar's printf if we see endl or ends
     if (fn == &std::endl<char, std::char_traits<char>> || fn == &std::ends<char, std::char_traits<char>>)
@@ -51,6 +61,7 @@ namespace BWAPI
   void GameWrapper::flush()
   {
     if (!BroodwarPtr) return;
+    std::ostringstream &ss = stream();
     if (ss.str().empty()) return;
 
     BroodwarPtr->printf("%s", ss.str().c_str() );

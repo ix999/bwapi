@@ -327,7 +327,14 @@ struct draw_ui_wrapper {
 // Dual-host: which in-process viewer (bot) the CURRENT THREAD is dispatching for. Command
 // encoders on viewer-less handles (Player, Unit) attribute through this; the dual launcher
 // sets it once per bot dispatch thread. Single mode: always 0.
+// sb-perf: initial-exec TLS (this library is loaded at program start). The guard is
+// open-coded because this TU does not include BWAPI/Game.h, where BWAPI_TLS_IE and
+// the rationale live: keep the two conditions identical if either changes.
+#if defined(__ELF__) && !defined(SB_NO_TLS_IE)
+thread_local int active_viewer __attribute__((tls_model("initial-exec"))) = 0;
+#else
 thread_local int active_viewer = 0;
+#endif
 
 void set_thread_viewer(int viewer) {
   active_viewer = viewer;

@@ -55,8 +55,8 @@ namespace BWAPI
   // Dual-host: per-thread GameImpl storage — each in-process bot runs on its own dispatch
   // thread, so every by-name BroodwarImpl reference inside BWAPI resolves to that bot's own
   // mirror. Single-threaded hosts construct exactly one, on the main thread, as before.
-  thread_local BroodwarImpl_storage_t BroodwarImpl_storage;
-  thread_local GameImpl& BroodwarImpl = (GameImpl&)BroodwarImpl_storage.buf;
+  thread_local BroodwarImpl_storage_t BroodwarImpl_storage BWAPI_TLS_IE;
+  thread_local GameImpl& BroodwarImpl BWAPI_TLS_IE = (GameImpl&)BroodwarImpl_storage.buf;
   
   BroodwarImpl_handle::BroodwarImpl_handle(BW::Game bwgame) {
     BroodwarImpl_storage.construct(bwgame);
