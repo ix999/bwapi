@@ -47,10 +47,19 @@ jobs:
         with:
           validate-wrappers: false
 
+      # The runner ships the SDK but does not put cmdline-tools on PATH.
+      # Versions here must match ndkVersion and the cmake version pinned in
+      # android/app/build.gradle.kts.
       - name: Install pinned NDK and CMake
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+          sdkmanager="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            echo "sdkmanager not found at $sdkmanager" >&2
+            ls -la "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools" >&2 || true
+            exit 1
+          fi
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" --install "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Build debug APK
         working-directory: android
