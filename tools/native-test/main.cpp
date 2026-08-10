@@ -106,6 +106,23 @@ int main(int argc, char** argv) {
 	core.tick();
 	print_status("after speed 8x", core);
 
+	// Seek near the end, which simulates almost the entire replay and so
+	// forces the snapshot cap to kick in repeatedly. Memory is expected to stay
+	// bounded; run under a memory profiler to confirm.
+	core.cmd_set_paused(true);
+	core.cmd_seek_fraction(0.95);
+	for (int i = 0; i < 4000; ++i) {
+		if (!core.tick()) break;
+		if (core.status().current_frame >= (int)(core.status().end_frame * 0.95)) break;
+	}
+	print_status("after seek 95%", core);
+
+	const int target = (int)(core.status().end_frame * 0.95);
+	if (core.status().current_frame < target) {
+		fprintf(stderr, "FAIL: never reached 95%% (%d < %d)\n", core.status().current_frame, target);
+		return 1;
+	}
+
 	printf("OK\n");
 	return 0;
 }

@@ -9,9 +9,15 @@ archives never leave the device.
 
 ## Status
 
-The app source is complete. It has **not been compiled into an APK yet** — see
-[Building](#building) for what you need. The platform-independent engine core is
-covered by a desktop harness (`tools/native-test`) that does build and run.
+The app source is complete, and the engine integration is verified: the
+playback core loads retail 1.16.1 MPQs, parses real replays, plays, seeks,
+rewinds and pauses correctly, across a range of maps and replay lengths
+(5k–45k frames). Peak memory stays flat at ~86 MB whether a run simulates half
+the replay or 95% of it, which is the snapshot cap doing its job.
+
+It has **not been compiled into an APK yet** — that needs an Android SDK/NDK;
+see [Building](#building). The Kotlin/Android layer is therefore unexercised;
+what is proven is everything below the JNI boundary.
 
 ## Requirements
 
@@ -110,8 +116,20 @@ SDL_VIDEODRIVER=dummy ./build-native/bwreplay-native-test <dir-with-mpqs> <repla
 ```
 
 It plays, seeks forward, rewinds, checks that pausing actually stops the
-simulation, and changes speed. The Android build compiles the same sources with
-the same flags.
+simulation, changes speed, and finally seeks to 95% — which simulates almost
+the whole replay and so forces the snapshot cap to engage repeatedly. The
+Android build compiles the same sources with the same flags.
+
+Expected output against a real replay:
+
+```
+map: The Fortress 1.1
+end frame: 21981
+after seek 50%     frame=10993/21981 paused=0 speed=1.00 done=0
+after rewind 10%   frame=2202/21981 paused=0 speed=1.00 done=0
+after seek 95%     frame=20881/21981 paused=1 speed=8.00 done=0
+OK
+```
 
 ## Known limitations
 
@@ -121,5 +139,6 @@ the same flags.
   playback.
 - **No pinch-zoom yet.** Zoom is on the transport bar; pinch would need SDL
   touch events handled alongside the synthesised mouse events.
-- Playback against real game data has not been verified end to end — see
+- **The Android layer is untested on a device.** The engine below JNI is
+  verified; the activities, overlay and importers are not — see
   [Status](#status).
