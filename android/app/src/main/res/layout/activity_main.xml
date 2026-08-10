@@ -48,6 +48,12 @@
         android:layout_marginTop="16dp"
         android:text="@string/replays_import" />
 
+    <Button
+        android:id="@+id/watch_folder"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/watch_folder" />
+
     <TextView
         android:id="@+id/empty_message"
         android:layout_width="match_parent"

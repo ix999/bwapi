@@ -103,6 +103,16 @@ Java_com_openbw_replays_NativeBridge_nativeSetZoom(JNIEnv*, jclass, jfloat zoom)
 }
 
 JNIEXPORT void JNICALL
+Java_com_openbw_replays_NativeBridge_nativeLoadReplay(JNIEnv* env, jclass, jstring path) {
+	if (!path) return;
+	const char* chars = env->GetStringUTFChars(path, nullptr);
+	if (!chars) return;
+	std::string value(chars);
+	env->ReleaseStringUTFChars(path, chars);
+	with_core([&](bwreplay::Core& core) { core.cmd_load_replay_path(value); });
+}
+
+JNIEXPORT void JNICALL
 Java_com_openbw_replays_NativeBridge_nativeQuit(JNIEnv*, jclass) {
 	with_core([](bwreplay::Core& core) { core.cmd_quit(); });
 }

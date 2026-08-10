@@ -57,6 +57,13 @@ object NativeBridge {
 
     fun setZoom(zoom: Float) = nativeSetZoom(zoom)
 
+    /**
+     * Switches to another replay without tearing the engine down, so the mpqs
+     * and image data stay loaded. [path] must be a readable file path, not a
+     * content URI.
+     */
+    fun loadReplay(path: String) = nativeLoadReplay(path)
+
     fun quit() = nativeQuit()
 
     /** Last fatal engine error, or an empty string. Survives the engine exiting. */
@@ -75,6 +82,7 @@ object NativeBridge {
     @JvmStatic private external fun nativeSeekFrame(frame: Int)
     @JvmStatic private external fun nativePan(dx: Int, dy: Int)
     @JvmStatic private external fun nativeSetZoom(zoom: Float)
+    @JvmStatic private external fun nativeLoadReplay(path: String)
     @JvmStatic private external fun nativeQuit()
     @JvmStatic private external fun nativeGetError(): String?
     @JvmStatic private external fun nativeGetMapName(): String?

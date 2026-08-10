@@ -92,6 +92,48 @@ capitalisation above regardless of how the source files were named.
 Replays are imported the same way and copied into the library, because a SAF
 content URI is not something native code can `fopen()`.
 
+## Getting replays onto the phone
+
+Besides picking files by hand, the app can watch **one folder** and import any
+new `.rep` it finds, on launch. Tap **Sync from a folder…**, pick the folder,
+and that grant persists across reboots. Nothing runs in the background — a
+replay viewer does not need to sync while it is closed, and this way it costs
+no battery.
+
+Pair it with whatever already syncs that folder from your desktop. The app
+never talks to the network itself, so the sync tool is entirely your choice.
+
+**Why there is no built-in Google Drive integration.** It would mean adding the
+`INTERNET` permission, an OAuth flow and Play Services, which trades away the
+property that makes this app simple to trust: it cannot phone home. The folder
+approach gets the same result, works with any provider, and keeps the app
+offline.
+
+**Which sync tool.** Be aware that Google Drive is the weakest option here, not
+the obvious one: the Drive Android app does not reliably expose a folder to
+`ACTION_OPEN_DOCUMENT_TREE`, so it may not be selectable as a watched folder at
+all. In rough order of how well they work:
+
+| Tool | How it behaves |
+| --- | --- |
+| **Syncthing** | Best fit. Writes real files to real local storage, no account, syncs over your LAN. Point it at the Mac replay folder. |
+| Dropbox / Nextcloud | Provide proper document providers; selectable as a watched folder. |
+| Google Drive | May not be pickable as a tree. Workaround: save replays to `Downloads` from the Drive app and watch `Downloads` instead. |
+
+On the Mac side, sync the retail replay folder — see the repo's
+[CLAUDE.md](../CLAUDE.md#where-generated-replays-go) for the exact path.
+
+## Starting up
+
+The app opens the **newest replay** and starts playing immediately, so
+launching it puts you in a game rather than a file list. Autoplay happens only
+on a cold start; backing out of the viewer lands on the library, which would
+otherwise be unreachable.
+
+Inside the viewer, **Replays** in the top bar lists the library and switches
+replay in place. The engine rebinds without reloading the mpqs or the image
+data, so the swap is quick, and a paused viewer stays paused across it.
+
 ## How it fits together
 
 ```

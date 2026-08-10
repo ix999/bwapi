@@ -1,5 +1,6 @@
 package com.openbw.replays
 
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -33,11 +34,17 @@ class ViewerActivity : SDLActivity() {
     private lateinit var seekBar: SeekBar
     private lateinit var timeLabel: TextView
     private lateinit var speedButton: Button
+    private lateinit var titleLabel: TextView
+
+    private lateinit var replayStore: ReplayStore
 
     private var userIsSeeking = false
     private var engineHasStarted = false
     private var speedIndex = DEFAULT_SPEED_INDEX
     private var zoom = 2f
+
+    /** Name of the replay currently loaded, for the overlay title. */
+    private var currentReplayName: String = ""
 
     /**
      * Order matters: SDLActivity treats the last entry as the library holding
@@ -56,6 +63,10 @@ class ViewerActivity : SDLActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        replayStore = ReplayStore(this)
+        currentReplayName = intent.getStringExtra(EXTRA_REPLAY_PATH)
+            ?.let { File(it).nameWithoutExtension }.orEmpty()
 
         // Attach to the window's content view rather than SDLActivity's own
         // mLayout field: that field is SDL implementation detail, and the
@@ -81,6 +92,9 @@ class ViewerActivity : SDLActivity() {
         overlay.findViewById<Button>(R.id.zoom_in).setOnClickListener { applyZoom(zoom * 1.5f) }
         overlay.findViewById<Button>(R.id.zoom_out).setOnClickListener { applyZoom(zoom / 1.5f) }
 
+        titleLabel = overlay.findViewById(R.id.replay_title)
+        overlay.findViewById<Button>(R.id.pick_replay).setOnClickListener { showReplayPicker() }
+
         seekBar.max = SEEK_RESOLUTION
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -97,6 +111,38 @@ class ViewerActivity : SDLActivity() {
         })
 
         speedButton.text = formatSpeed(SPEEDS[speedIndex])
+        titleLabel.text = currentReplayName
+    }
+
+    /**
+     * Lists the library so another replay can be started without leaving the
+     * viewer. The engine swaps replays in place, so the mpqs and image data
+     * stay loaded and the switch is quick.
+     */
+    private fun showReplayPicker() {
+        val replays = replayStore.list()
+        if (replays.isEmpty()) {
+            Toast.makeText(this, R.string.replays_empty, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val wasPaused = NativeBridge.status().paused
+        val labels = replays.map { it.name }.toTypedArray()
+        val current = replays.indexOfFirst { it.name == currentReplayName }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.viewer_pick_replay)
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                dialog.dismiss()
+                val chosen = replays[which]
+                currentReplayName = chosen.name
+                titleLabel.text = currentReplayName
+                NativeBridge.loadReplay(chosen.file.absolutePath)
+                // Loading resets to playing; honour the state the user was in.
+                if (wasPaused) NativeBridge.setPaused(true)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     override fun onStart() {

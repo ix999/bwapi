@@ -24,4 +24,17 @@
     <string name="viewer_zoom_out">Zoom out</string>
     <string name="viewer_zoom_in_label">+</string>
     <string name="viewer_zoom_out_label">−</string>
+
+    <string name="watch_folder">Sync from a folder…</string>
+    <string name="watch_folder_active">Syncing from: %1$s</string>
+    <string name="watch_folder_stop_title">Stop syncing</string>
+    <string name="watch_folder_stop">Stop pulling new replays from %1$s? Replays already imported stay in the library.</string>
+    <string name="watch_folder_stop_confirm">Stop syncing</string>
+
+    <string name="viewer_pick_replay">Replays</string>
+
+    <plurals name="synced_replays">
+        <item quantity="one">Imported %1$d new replay</item>
+        <item quantity="other">Imported %1$d new replays</item>
+    </plurals>
 </resources>

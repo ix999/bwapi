@@ -9,7 +9,9 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <fstream>
 #include <map>
+#include <vector>
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -78,6 +80,7 @@ enum class CmdType {
 	seek_fraction,
 	pan,
 	set_zoom,
+	load_replay_path,
 	quit,
 };
 
@@ -87,6 +90,7 @@ struct Cmd {
 	double value = 0.0;
 	int x = 0;
 	int y = 0;
+	std::string text;
 };
 
 // Native BW pixels are far too small on a phone, so the view is magnified by
@@ -163,11 +167,89 @@ struct Core::Impl {
 				zoom = std::max(kMinZoom, std::min(kMaxZoom, c.value));
 				apply_view_scale();
 				break;
+			case CmdType::load_replay_path: {
+				std::string err;
+				if (!load_replay_file(c.text, &err)) {
+					ui::log("could not load replay: %s\n", a_string(err.c_str()));
+					std::lock_guard<std::mutex> lock(mutex);
+					last_error = err;
+				}
+				// The rest of this batch was aimed at the previous replay.
+				return;
+			}
 			case CmdType::quit:
 				ui->window_closed = true;
 				break;
 			}
 		}
+	}
+
+	// engine thread. Swaps in a new replay, keeping the engine and all the
+	// loaded image data in place.
+	bool do_load_replay(const uint8_t* data, size_t len, std::string* err) {
+		try {
+			saved_states.clear();
+			save_interval = kSaveIntervalFrames;
+			ui->reset();
+			ui->load_replay_data(data, len);
+			ui->set_image_data();
+
+			ui->replay_frame = 0;
+			ui->is_paused = false;
+
+			// Start centred on the map rather than in the top-left corner.
+			ui->screen_pos = xy((int)ui->game_st.map_width / 2 - (int)ui->screen_width / 2,
+			                    (int)ui->game_st.map_height / 2 - (int)ui->screen_height / 2);
+
+			ReplayInfo info;
+			info.end_frame = ui->replay_st.end_frame;
+			info.map_name = std::string(ui->replay_st.map_name.data(), ui->replay_st.map_name.size());
+			for (auto& name : ui->replay_st.player_name) {
+				if (name.empty()) continue;
+				info.player_names.push_back(std::string(name.data(), name.size()));
+			}
+
+			{
+				std::lock_guard<std::mutex> lock(mutex);
+				replay_info = std::move(info);
+				// Drop anything still queued: a seek aimed at the previous
+				// replay means nothing against this one.
+				commands.clear();
+				last_error.clear();
+			}
+
+			replay_loaded = true;
+			last_tick = clock.now();
+			publish();
+			return true;
+		} catch (const std::exception& e) {
+			if (err) *err = e.what();
+			replay_loaded = false;
+			return false;
+		}
+	}
+
+	// engine thread
+	bool load_replay_file(const std::string& path, std::string* err) {
+		std::ifstream f(path, std::ios::binary);
+		if (!f) {
+			if (err) *err = "could not open " + path;
+			return false;
+		}
+		f.seekg(0, std::ios::end);
+		std::streamoff len = f.tellg();
+		if (len <= 0) {
+			if (err) *err = "empty replay: " + path;
+			return false;
+		}
+		f.seekg(0, std::ios::beg);
+		std::vector<uint8_t> bytes((size_t)len);
+		f.read(reinterpret_cast<char*>(bytes.data()), len);
+		if (!f) {
+			if (err) *err = "could not read " + path;
+			return false;
+		}
+		return do_load_replay(bytes.data(), bytes.size(), err);
 	}
 
 	// engine thread. ui_functions::resize() hardcodes a 1:1 view scale, so
@@ -335,44 +417,13 @@ bool Core::load_replay(const uint8_t* data, size_t len, std::string* err) {
 		if (err) *err = "engine not initialized";
 		return false;
 	}
-	try {
-		impl_->saved_states.clear();
-		impl_->save_interval = kSaveIntervalFrames;
-		impl_->ui->reset();
-		impl_->ui->load_replay_data(data, len);
-		impl_->ui->set_image_data();
+	return impl_->do_load_replay(data, len, err);
+}
 
-		ui_functions& ui = *impl_->ui;
-		ui.replay_frame = 0;
-		ui.is_paused = false;
-
-		// Start centred on the map rather than in the top-left corner.
-		ui.screen_pos = xy((int)ui.game_st.map_width / 2 - (int)ui.screen_width / 2,
-		                   (int)ui.game_st.map_height / 2 - (int)ui.screen_height / 2);
-
-		ReplayInfo info;
-		info.end_frame = ui.replay_st.end_frame;
-		info.map_name = std::string(ui.replay_st.map_name.data(), ui.replay_st.map_name.size());
-		for (auto& name : ui.replay_st.player_name) {
-			if (name.empty()) continue;
-			info.player_names.push_back(std::string(name.data(), name.size()));
-		}
-
-		{
-			std::lock_guard<std::mutex> lock(impl_->mutex);
-			impl_->replay_info = std::move(info);
-			impl_->commands.clear();
-		}
-
-		impl_->replay_loaded = true;
-		impl_->last_tick = impl_->clock.now();
-		impl_->publish();
-		return true;
-	} catch (const std::exception& e) {
-		if (err) *err = e.what();
-		impl_->replay_loaded = false;
-		return false;
-	}
+void Core::cmd_load_replay_path(const std::string& path) {
+	Cmd c{CmdType::load_replay_path};
+	c.text = path;
+	impl_->push(c);
 }
 
 void Core::resize(int width, int height) {

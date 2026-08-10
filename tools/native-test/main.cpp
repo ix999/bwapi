@@ -123,6 +123,42 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// Swapping replays without tearing the engine down is what the viewer's
+	// picker does. Verify the engine actually rebinds to the new replay rather
+	// than carrying the old one's state forward.
+	if (argc >= 4) {
+		const std::string second_path = argv[3];
+		const int first_end = core.status().end_frame;
+		const std::string first_map = core.info().map_name;
+
+		core.cmd_load_replay_path(second_path);
+		for (int i = 0; i < 60; ++i) {
+			if (!core.tick()) break;
+		}
+
+		bwreplay::ReplayInfo swapped = core.info();
+		printf("swapped to: %s (end frame %d)\n", swapped.map_name.c_str(), swapped.end_frame);
+		print_status("after swap", core);
+
+		if (swapped.end_frame == 0) {
+			fprintf(stderr, "FAIL: swapped replay reports no frames\n");
+			return 1;
+		}
+		if (core.status().current_frame > swapped.end_frame) {
+			fprintf(stderr, "FAIL: playhead past the end of the swapped replay\n");
+			return 1;
+		}
+		if (swapped.end_frame == first_end && swapped.map_name == first_map) {
+			fprintf(stderr, "WARN: swapped replay looks identical to the first\n");
+		}
+		// A stale seek from the previous replay must not survive the swap.
+		if (core.status().current_frame > swapped.end_frame / 2) {
+			fprintf(stderr, "FAIL: swap did not reset the playhead (%d)\n",
+			        core.status().current_frame);
+			return 1;
+		}
+	}
+
 	printf("OK\n");
 	return 0;
 }

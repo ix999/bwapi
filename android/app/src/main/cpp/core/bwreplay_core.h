@@ -61,6 +61,11 @@ public:
 	// read a .rep through Android's SAF without materialising a real file.
 	bool load_replay(const uint8_t* data, size_t len, std::string* err);
 
+	// Any thread. Queues a switch to another replay, applied on the next tick.
+	// Lets the viewer change replay without tearing down the engine, which
+	// would mean reloading the mpqs and all the image data again.
+	void cmd_load_replay_path(const std::string& path);
+
 	// engine thread.
 	void resize(int width, int height);
 
