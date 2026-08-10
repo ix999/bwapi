@@ -22,6 +22,9 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Needed to publish the rolling release below.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,6 +73,31 @@ jobs:
           name: openbw-replays-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # Actions artifacts are zipped and need a signed-in browser, which makes
+      # installing on a phone awkward. A release asset is a plain, permanent,
+      # one-tap URL instead:
+      #
+      #   https://github.com/<owner>/<repo>/releases/download/debug-latest/openbw-replays-debug.apk
+      #
+      # The tag is replaced on every build, so that URL always serves the newest
+      # APK. This is a debug build signed with the standard debug key, and the
+      # repository is public, so treat the download as public too.
+      - name: Publish rolling debug release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          apk="$(ls android/app/build/outputs/apk/debug/*.apk | head -1)"
+          cp "$apk" openbw-replays-debug.apk
+
+          # Replace rather than update: a rolling tag should not accumulate
+          # assets from previous builds.
+          gh release delete debug-latest --yes --cleanup-tag || true
+          gh release create debug-latest openbw-replays-debug.apk \
+            --title "Latest debug build" \
+            --notes "Automatic build of ${GITHUB_SHA}. Debug-signed; sideload only." \
+            --prerelease
 
   # The engine core is platform independent, so it is compiled and exercised
   # without any Android toolchain. Playback against real game data needs the
