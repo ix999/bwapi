@@ -110,10 +110,16 @@ int main(int argc, char** argv) {
 		SDL_Delay(8);
 	}
 
+	// Distinguish a clean exit from a failure mid-playback, so the viewer can
+	// explain itself instead of just disappearing.
+	const std::string playback_error = core.last_error();
+
 	{
 		std::lock_guard<std::mutex> lock(bwreplay_android::g_mutex);
 		bwreplay_android::g_core = nullptr;
 	}
+
+	if (!playback_error.empty()) log_error("playback stopped: " + playback_error);
 
 	SDL_Quit();
 	return 0;

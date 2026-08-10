@@ -65,7 +65,10 @@ class ReplayStore(context: Context) {
     /** Avoids clobbering an existing replay that happens to share a name. */
     private fun uniqueTarget(sourceName: String): File {
         val sanitized = sourceName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
-        val base = sanitized.removeSuffix(".rep").removeSuffix(".REP").ifBlank { "replay" }
+        // Case-insensitive: ".Rep" is as valid as ".rep", and stripping only
+        // the exact-case forms would leave the old extension in the new name.
+        val base = sanitized.dropLast(if (sanitized.endsWith(".rep", ignoreCase = true)) 4 else 0)
+            .ifBlank { "replay" }
         var candidate = File(directory, "$base.rep")
         var counter = 2
         while (candidate.exists()) {

@@ -84,6 +84,11 @@ public:
 	Status status() const;
 	ReplayInfo info() const;
 
+	// Any thread. The error that ended playback, or empty. tick() returning
+	// false is ambiguous on its own — it means either a clean exit or a
+	// failure — so the host reads this to tell the two apart.
+	std::string last_error() const;
+
 private:
 	struct Impl;
 	std::unique_ptr<Impl> impl_;

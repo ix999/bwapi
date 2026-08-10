@@ -117,6 +117,7 @@ struct Core::Impl {
 	std::deque<Cmd> commands;
 	Status published;
 	ReplayInfo replay_info;
+	std::string last_error;
 
 	void push(Cmd c) {
 		std::lock_guard<std::mutex> lock(mutex);
@@ -397,6 +398,8 @@ bool Core::tick() {
 		return !impl_->ui->window_closed;
 	} catch (const std::exception& e) {
 		ui::log("tick failed: %s\n", a_string(e.what()));
+		std::lock_guard<std::mutex> lock(impl_->mutex);
+		impl_->last_error = e.what();
 		return false;
 	}
 }
@@ -450,6 +453,11 @@ Status Core::status() const {
 ReplayInfo Core::info() const {
 	std::lock_guard<std::mutex> lock(impl_->mutex);
 	return impl_->replay_info;
+}
+
+std::string Core::last_error() const {
+	std::lock_guard<std::mutex> lock(impl_->mutex);
+	return impl_->last_error;
 }
 
 }  // namespace bwreplay
