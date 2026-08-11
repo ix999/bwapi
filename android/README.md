@@ -133,10 +133,15 @@ Tap **Cloud replays…**, enable it, and give it the repo, branch, folder and a
 fine-grained token with read-only *Contents* access. The token is stored on the
 device and never shipped in the APK.
 
-The defaults point at the bot repo's `with-assets` branch. Listing uses the git
-trees API recursively, so the layout does not matter — it finds the existing
-hash-sharded `replays/library/` corpus as well as flat files. Downloads go
-through the contents API with a raw `Accept` header, because
+By default it searches **every branch**. A cloud session's push protection
+normally confines it to its own working branch, so watching a single branch
+would mean retyping a branch name here every time a session reported one.
+Branches sharing a commit are walked once, and a replay present on several
+branches is downloaded once — matching is on the blob hash, not the path.
+
+Listing uses the git trees API recursively, so the layout does not matter: it
+finds the hash-sharded `replays/library/` corpus as well as flat files.
+Downloads go through the contents API with a raw `Accept` header, because
 `raw.githubusercontent.com` does not reliably honour a token on a private repo.
 
 The same connection can fetch the **game data**. If the repo holds the three

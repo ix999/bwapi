@@ -33,6 +33,12 @@
             android:inputType="textNoSuggestions"
             android:singleLine="true" />
 
+        <CheckBox
+            android:id="@+id/cloud_all_branches"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cloud_all_branches" />
+
         <EditText
             android:id="@+id/cloud_branch"
             android:layout_width="match_parent"

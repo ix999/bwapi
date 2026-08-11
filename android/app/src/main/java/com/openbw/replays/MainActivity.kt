@@ -164,12 +164,17 @@ class MainActivity : AppCompatActivity() {
     private fun showCloudFeedDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_cloud_feed, null)
         val enabled = view.findViewById<CheckBox>(R.id.cloud_enabled)
+        val allBranches = view.findViewById<CheckBox>(R.id.cloud_all_branches)
         val repo = view.findViewById<EditText>(R.id.cloud_repo)
         val branch = view.findViewById<EditText>(R.id.cloud_branch)
         val path = view.findViewById<EditText>(R.id.cloud_path)
         val token = view.findViewById<EditText>(R.id.cloud_token)
 
         enabled.isChecked = cloudFeed.isEnabled
+        allBranches.isChecked = cloudFeed.searchAllBranches
+        // The branch field is only consulted when not searching everything.
+        branch.isEnabled = !allBranches.isChecked
+        allBranches.setOnCheckedChangeListener { _, checked -> branch.isEnabled = !checked }
         repo.setText(cloudFeed.repo)
         branch.setText(cloudFeed.branch)
         path.setText(cloudFeed.path)
@@ -182,6 +187,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 cloudFeed.repo = repo.text.toString()
                 cloudFeed.branch = branch.text.toString()
+                cloudFeed.searchAllBranches = allBranches.isChecked
                 cloudFeed.path = path.text.toString()
                 cloudFeed.token = token.text.toString()
                 cloudFeed.isEnabled = enabled.isChecked

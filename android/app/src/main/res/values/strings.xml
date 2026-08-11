@@ -44,7 +44,8 @@
     <string name="cloud_body">Download replays committed to a private repository by a cloud machine, so games it produces reach this phone without going through a desktop. Nothing is ever uploaded.</string>
     <string name="cloud_enable">Fetch replays on launch</string>
     <string name="cloud_repo_hint">owner/repo</string>
-    <string name="cloud_branch_hint">branch</string>
+    <string name="cloud_all_branches">Search every branch</string>
+    <string name="cloud_branch_hint">branch (only when not searching all)</string>
     <string name="cloud_path_hint">folder (searched recursively)</string>
     <string name="cloud_token_hint">GitHub token</string>
     <string name="cloud_token_help">A private repo needs a fine-grained token with read-only Contents access to it. It is stored on this device only.</string>
