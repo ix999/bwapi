@@ -229,16 +229,28 @@ class ViewerActivity : SDLActivity() {
         if (level == zoom) return
         zoom = level
         touchView.zoom = zoom
-        // The engine needs it to convert device-pixel gestures into map pixels.
-        NativeBridge.setZoom(zoom)
+        // applySurfaceScale tells the engine the ratio it actually achieved.
         applySurfaceScale()
     }
 
     private fun applySurfaceScale() {
         val holder = mSurface?.holder ?: return
-        val metrics = resources.displayMetrics
-        val width = (metrics.widthPixels / zoom).toInt().coerceAtLeast(MIN_SURFACE_PX)
-        val height = (metrics.heightPixels / zoom).toInt().coerceAtLeast(MIN_SURFACE_PX)
+
+        // Measure from the touch view, not displayMetrics: it covers exactly
+        // the area SDL's surface does, so the device-pixel to map-pixel ratio
+        // the engine uses for taps and drags is the true one. displayMetrics
+        // can disagree with the laid-out size, which would put selection taps
+        // slightly off target.
+        val viewWidth = if (touchView.width > 0) touchView.width else resources.displayMetrics.widthPixels
+        val viewHeight = if (touchView.height > 0) touchView.height else resources.displayMetrics.heightPixels
+
+        val width = (viewWidth / zoom).toInt().coerceAtLeast(MIN_SURFACE_PX)
+        val height = (viewHeight / zoom).toInt().coerceAtLeast(MIN_SURFACE_PX)
+
+        // A clamped dimension makes the real ratio differ from the requested
+        // zoom; tell the engine what it actually is so input stays accurate.
+        NativeBridge.setZoom(viewWidth.toFloat() / width)
+
         // SDL sees this as a window resize and openbw reallocates its surfaces.
         holder.setFixedSize(width, height)
     }
@@ -259,7 +271,6 @@ class ViewerActivity : SDLActivity() {
                 if (!appliedInitialState) {
                     appliedInitialState = true
                     NativeBridge.setHudVisible(hudVisible)
-                    NativeBridge.setZoom(zoom)
                     applySurfaceScale()
                 }
                 val status = NativeBridge.status()
