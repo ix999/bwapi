@@ -18,6 +18,9 @@
 #include <chrono>
 #include <type_traits>
 #include <stdexcept>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -288,34 +291,100 @@ namespace BWAPI
     return true;
   }
   //------------------------------------------- INTERFACE EVENT UPDATE ---------------------------------------
+  // ---- interface-event walk skip (sb-perf) -----------------------------------------------
+  // SB_INTERFACE_EVENT_SKIP: unset/1 = on (default), 0 = off (kill-switch), verify = walk
+  // anyway and assert the invariant the skip rests on. Read once; getenv is not hot-path safe.
+  static bool interfaceEventSkipEnabled()
+  {
+    static const bool on = [] {
+      const char* v = std::getenv("SB_INTERFACE_EVENT_SKIP");
+      return !v || (std::strcmp(v, "0") != 0);
+    }();
+    return on;
+  }
+
+  static bool interfaceEventVerifyMode()
+  {
+    static const bool verify = [] {
+      const char* v = std::getenv("SB_INTERFACE_EVENT_SKIP");
+      return v && std::strcmp(v, "verify") == 0;
+    }();
+    return verify;
+  }
+
+  long long GameImpl::interfaceEventWalkSkipped = 0;
+  long long GameImpl::interfaceEventWalkRan     = 0;
+
+  // Skip predicate for one interface family. T::anyInterfaceEvents() counts live
+  // InterfaceEvent<T> objects across every instance of T; zero means every list is empty, so
+  // both branches of the walk below (updateEvents on an empty list, clearEvents on an empty
+  // list) are no-ops and the walk has no observable effect at all. Rule 9 holds by
+  // construction here rather than by measurement: there is no state to go stale.
+  //
+  // In verify mode we run the walk regardless AND check the invariant per object, so a
+  // miscounted event surfaces as a loud INTERFACE-EVENT-VERIFY-DIFF instead of as a silently
+  // dropped callback. The counter is allowed to drift high, so a false "must walk" is
+  // expected and harmless; a false "may skip" is the bug this hunts.
+  template <typename T>
+  static bool interfaceEventWalkNeeded()
+  {
+    if (!interfaceEventSkipEnabled() || interfaceEventVerifyMode())
+      return true;
+    if (T::anyInterfaceEvents())
+    {
+      ++GameImpl::interfaceEventWalkRan;
+      return true;
+    }
+    ++GameImpl::interfaceEventWalkSkipped;
+    return false;
+  }
+
   void GameImpl::processInterfaceEvents()
   {
     // GameImpl events
     this->updateEvents();
 
     // UnitImpl events
-    for(Unit u : this->accessibleUnits)
+    if (interfaceEventWalkNeeded<UnitInterface>())
     {
-      u->exists() ? u->updateEvents() : u->interfaceEvents.clear();
+      for(Unit u : this->accessibleUnits)
+      {
+        if (interfaceEventVerifyMode() && !UnitInterface::anyInterfaceEvents() && !u->eventListEmpty())
+          std::printf("INTERFACE-EVENT-VERIFY-DIFF f=%d unit=%d holds events while liveEventCount==0\n",
+                      this->getFrameCount(), u->getID());
+        u->exists() ? u->updateEvents() : u->clearEvents();
+      }
     }
 
     // ForceImpl events
-    for (Force f : this->forces)
-      f->updateEvents();
+    if (interfaceEventWalkNeeded<ForceInterface>())
+    {
+      for (Force f : this->forces)
+        f->updateEvents();
+    }
 
     // BulletImpl events
-    for (Bullet b : this->bullets)
+    if (interfaceEventWalkNeeded<BulletInterface>())
     {
-      b->exists() ? b->updateEvents() : b->interfaceEvents.clear();
+      for (Bullet b : this->bullets)
+      {
+        b->exists() ? b->updateEvents() : b->clearEvents();
+      }
     }
 
     // RegionImpl events
-    for (Region r : this->regionsList)
-      r->updateEvents();
+    if (interfaceEventWalkNeeded<RegionInterface>())
+    {
+      for (Region r : this->regionsList)
+        r->updateEvents();
+    }
 
     // PlayerImpl events
-    for (Player p : this->playerSet)
-      p->updateEvents();
+    if (interfaceEventWalkNeeded<PlayerInterface>())
+    {
+      for (Player p : this->playerSet)
+        p->updateEvents();
+    }
   }
   //------------------------------------------- GET PLAYER INTERNAL ------------------------------------------
   PlayerImpl *GameImpl::_getPlayer(int id)
@@ -431,7 +500,7 @@ namespace BWAPI
     this->frameCount = 0;
 
     this->clientInfo.clear();
-    this->interfaceEvents.clear();
+    this->clearEvents();
 
     //reload auto menu data (in case the AI set the location of the next map/replay)
     this->loadAutoMenuData();

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <map>
 #include <list>
 
@@ -24,6 +25,37 @@ namespace BWAPI
 
     friend class GameImpl;
 
+    // ---- interface-event live count (sb-perf) --------------------------------------------
+    // Almost no bot ever calls registerEvent, but GameImpl::processInterfaceEvents() walks
+    // every accessible unit, bullet, region and player once per frame regardless, purely to
+    // find an empty interfaceEvents list. By then those objects have been evicted, so that
+    // walk is close to pure L2/LL miss cost for zero effect (measured: the single largest
+    // remaining per-unit pass in the dual-host cache profile).
+    //
+    // liveEventCount is the number of InterfaceEvent<T> objects alive across ALL instances of
+    // T. When it is zero, every list is provably empty, so updateEvents() is a no-op and
+    // interfaceEvents.clear() is a no-op -- the whole walk can be skipped with no observable
+    // difference. This is not a heuristic: rule 9 holds by construction, not by measurement.
+    //
+    // The accounting is deliberately allowed to drift HIGH, never low. Every element was
+    // counted on push_back, and every decrement is bounded by what a list actually holds, so
+    // total decrements can never exceed total increments. A missed decrement costs us the
+    // optimisation; it can never cause a wrongly skipped walk. Any .clear() that bypasses
+    // clearEvents() (e.g. the BWAPIClient copy) is therefore safe, just pessimal.
+    //
+    // COMPATIBILITY BOUNDARY, stated plainly. Source compatibility is exact: registerEvent's
+    // signature and semantics are unchanged, so any bot RECOMPILED against these headers behaves
+    // identically with the skip on. Binary layout is unchanged too (the counter is static; the
+    // new members are non-virtual), so existing .so files still load and run. The one hole is a
+    // bot binary compiled against UPSTREAM headers that calls registerEvent on a Unit / Bullet /
+    // Region / Force / Player: it inlined the old body, which does not increment, so BWAPI would
+    // skip servicing its events. Such a binary must run with SB_INTERFACE_EVENT_SKIP=0. Nothing
+    // in this tree is in that category -- the only registerEvent caller is ExampleAIModule, and
+    // it registers on Game, whose walk is deliberately left UNCONDITIONAL for exactly this
+    // reason. This hole cannot be closed by counting harder: catching it would mean observing
+    // every list, which is the cost being removed.
+    static std::size_t liveEventCount;
+
     // Function manages events and updates it for the given frame
     void updateEvents()
     {
@@ -33,6 +65,7 @@ namespace BWAPI
         if ( e->isFinished() )
         {
           e = interfaceEvents.erase(e);
+          --liveEventCount;
         }
         else
         {
@@ -41,8 +74,30 @@ namespace BWAPI
         }
       }
     };
+
+    // Counted equivalent of interfaceEvents.clear(); use this instead so liveEventCount stays
+    // tight. Correctness does not depend on it (see liveEventCount).
+    void clearEvents()
+    {
+      liveEventCount -= interfaceEvents.size();
+      interfaceEvents.clear();
+    };
+
+    // For SB_INTERFACE_EVENT_SKIP=verify: the invariant the skip rests on.
+    bool eventListEmpty() const
+    {
+      return interfaceEvents.empty();
+    };
     /// @endcond
   public:
+    /// @cond HIDDEN
+    // True if any instance of T holds a registered event; false means the per-object event
+    // walk for T is provably a no-op this frame.
+    static bool anyInterfaceEvents()
+    {
+      return liveEventCount != 0;
+    };
+    /// @endcond
     /// <summary>Retrieves a pointer or value at an index that was stored for this interface using
     /// setClientInfo.</summary>
     ///
@@ -122,8 +177,12 @@ namespace BWAPI
     void registerEvent(const std::function<void(T*)> &action, const std::function<bool(T*)> &condition = nullptr, int timesToRun = -1, int framesToCheck = 0)
     {
       interfaceEvents.push_back( InterfaceEvent<T>(action,condition,timesToRun,framesToCheck) );
+      ++liveEventCount;
     };
   };
+
+  template < typename T >
+  std::size_t Interface<T>::liveEventCount = 0;
 
 
 }

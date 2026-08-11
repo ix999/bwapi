@@ -15,7 +15,7 @@ namespace BWAPI
     lastCommandFrame = 0;
     lastCommand      = UnitCommand();
     this->clientInfo.clear();
-    this->interfaceEvents.clear();
+    this->clearEvents();
 
     connectedUnits.clear();
   }

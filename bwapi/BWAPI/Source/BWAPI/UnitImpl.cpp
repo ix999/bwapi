@@ -149,7 +149,7 @@ namespace BWAPI
     lastType           = UnitTypes::Unknown;
     lastPlayer         = nullptr;
     this->clientInfo.clear();
-    this->interfaceEvents.clear();
+    this->clearEvents();
 
     updateInternalData();
 

@@ -1,5 +1,6 @@
 #include "GameImpl.h"
 #include <time.h>
+#include <cstdio>
 
 #include <Util/StringUtil.h>
 
@@ -415,6 +416,18 @@ namespace BWAPI
       this->inGame = false;
       events.push_back(Event::MenuFrame());
       server.update();
+    }
+
+    // Interface-event walk skip telemetry (sb-perf, ENGINE_OPT_INTERFACE_EVENTS.md). Same shape
+    // as PLAYERMIRROR: one line per game so a run's logs say whether the cut was live.
+    if (interfaceEventWalkSkipped + interfaceEventWalkRan > 0)
+    {
+      const long long total = interfaceEventWalkSkipped + interfaceEventWalkRan;
+      std::printf("INTERFACEEVENTS skipped=%lld walked=%lld rate=%.1f%%\n",
+                  interfaceEventWalkSkipped, interfaceEventWalkRan,
+                  100.0 * interfaceEventWalkSkipped / total);
+      interfaceEventWalkSkipped = 0;
+      interfaceEventWalkRan     = 0;
     }
 
     // player-specific game end
