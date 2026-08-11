@@ -96,9 +96,10 @@ struct Cmd {
 	std::string text;
 };
 
-// Native BW pixels are far too small on a phone, so the view is magnified by
-// default. Bounds keep view_width/view_height from collapsing to zero.
-constexpr double kMinZoom = 0.5;
+// Native BW pixels are far too small on a phone, so the host magnifies by
+// default. This is only the device-pixel to map-pixel conversion factor; the
+// magnification itself is the host shrinking the SDL surface.
+constexpr double kMinZoom = 1.0;
 constexpr double kMaxZoom = 8.0;
 constexpr double kDefaultZoom = 2.0;
 
@@ -170,15 +171,11 @@ struct Core::Impl {
 				// so panning tracks the finger at any zoom level.
 				ui->screen_pos = ui->screen_pos + xy((int)(c.x / zoom), (int)(c.y / zoom));
 				break;
-			case CmdType::set_zoom: {
-				// Keep the point under the centre of the screen fixed, so
-				// zooming does not slide the view off what you were looking at.
-				xy centre = ui->screen_pos + xy((int)ui->view_width / 2, (int)ui->view_height / 2);
+			case CmdType::set_zoom:
+				// Only the input conversion factor. The actual magnification is
+				// the host resizing the SDL surface.
 				zoom = std::max(kMinZoom, std::min(kMaxZoom, c.value));
-				apply_view_scale();
-				ui->screen_pos = centre - xy((int)ui->view_width / 2, (int)ui->view_height / 2);
 				break;
-			}
 			case CmdType::select_at: {
 				unit_t* u = ui->select_get_unit_at(screen_to_map(c.x, c.y));
 				ui->current_selection_clear();
@@ -303,19 +300,22 @@ struct Core::Impl {
 		return true;
 	}
 
-	// engine thread. ui_functions::resize() hardcodes a 1:1 view scale, so
-	// re-derive the view dimensions from the current zoom afterwards. Larger
-	// view_scale means fewer game pixels across the window, i.e. bigger
-	// sprites. view_scale is recomputed from the rounded view_width so the
-	// scale the renderer uses matches the area it iterates over exactly.
-	void apply_view_scale() {
+	// engine thread. Magnification is NOT done with openbw's view_scale: that
+	// field is not applied to rendering at all. screen_tile_bounds() uses
+	// view_width/view_height to choose which tiles to draw, and update() ends
+	// with a 1:1 rgba->window blit, so shrinking the view simply left most of
+	// the window undrawn. The host magnifies by giving SDL a smaller surface and
+	// letting the compositor scale it up, which keeps openbw rendering 1:1.
+	//
+	// `zoom` is still tracked here because input arrives in device pixels and has
+	// to be converted to map pixels.
+	void centre_on(xy map_point) {
 		if (!ui) return;
-		ui->view_scale = fp16::from_raw((int)(zoom * 65536.0));
-		ui->view_width = (fp16::integer(ui->screen_width) / ui->view_scale).integer_part();
-		ui->view_height = (fp16::integer(ui->screen_height) / ui->view_scale).integer_part();
-		if (ui->view_width == 0) ui->view_width = 1;
-		if (ui->view_height == 0) ui->view_height = 1;
-		ui->view_scale = (ufp16::integer(ui->screen_width) / ui->view_width).as_signed();
+		ui->screen_pos = map_point - xy((int)ui->view_width / 2, (int)ui->view_height / 2);
+	}
+
+	xy view_centre() const {
+		return ui->screen_pos + xy((int)ui->view_width / 2, (int)ui->view_height / 2);
 	}
 
 	int clamp_frame(int frame) const {
@@ -450,7 +450,6 @@ bool Core::init(const std::string& data_path, int width, int height, std::string
 
 		ui.wnd.create("OpenBW Replays", 0, 0, width, height);
 		ui.resize(width, height);
-		impl_->apply_view_scale();
 
 		impl_->last_tick = impl_->clock.now();
 		impl_->initialized = true;
@@ -481,7 +480,6 @@ void Core::cmd_load_replay_path(const std::string& path) {
 void Core::resize(int width, int height) {
 	if (!impl_->ui) return;
 	impl_->ui->resize(width, height);
-	impl_->apply_view_scale();
 }
 
 bool Core::tick() {
@@ -494,11 +492,13 @@ bool Core::tick() {
 		impl_->apply_follow();
 		size_t was_width = impl_->ui->screen_width;
 		size_t was_height = impl_->ui->screen_height;
+		const xy centre_before = impl_->view_centre();
 		impl_->ui->update();
-		// update() handles window resize events itself by calling resize(),
-		// which restores a 1:1 view scale; re-apply the zoom when that happens.
+		// update() handles surface resizes itself. The host resizes the surface
+		// to zoom, so hold the map centre across it rather than the top-left
+		// corner, which would slide the view on every zoom step.
 		if (impl_->ui->screen_width != was_width || impl_->ui->screen_height != was_height) {
-			impl_->apply_view_scale();
+			impl_->centre_on(centre_before);
 		}
 		impl_->publish();
 		return !impl_->ui->window_closed;

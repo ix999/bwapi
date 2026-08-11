@@ -102,7 +102,9 @@ class GameTouchView @JvmOverloads constructor(
     }
 
     companion object {
-        const val MIN_ZOOM = 0.5f
+        // Below 1 would mean an SDL surface larger than the display: more
+        // pixels for the software renderer and no visible benefit.
+        const val MIN_ZOOM = 1f
         const val MAX_ZOOM = 8f
         const val DEFAULT_ZOOM = 2f
     }

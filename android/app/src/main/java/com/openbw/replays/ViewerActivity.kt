@@ -111,7 +111,7 @@ class ViewerActivity : SDLActivity() {
         touchView.zoom = zoom
         // Pinch changes zoom directly; mirror it so the +/- buttons continue
         // from where the gesture left off.
-        touchView.onZoomChanged = { zoom = it }
+        touchView.onZoomChanged = { applyZoom(it) }
         touchView.onFollowToggled = {
             val message =
                 if (NativeBridge.status().following) R.string.viewer_following
@@ -212,10 +212,35 @@ class ViewerActivity : SDLActivity() {
         super.onBackPressed()
     }
 
+    /**
+     * Magnifies by shrinking SDL's surface and letting the compositor scale it
+     * back up to the display.
+     *
+     * openbw cannot magnify itself: its `view_scale` is never applied to
+     * rendering, and shrinking the view only makes it draw fewer tiles, leaving
+     * the rest of the window undrawn. Rendering fewer pixels is also cheaper,
+     * which suits a software renderer on a phone.
+     *
+     * Zoom snaps to a small set of levels so a pinch does not recreate the
+     * surface on every frame.
+     */
     private fun applyZoom(requested: Float) {
-        zoom = requested.coerceIn(MIN_ZOOM, MAX_ZOOM)
+        val level = ZOOM_LEVELS.minByOrNull { kotlin.math.abs(it - requested) } ?: 1f
+        if (level == zoom) return
+        zoom = level
         touchView.zoom = zoom
+        // The engine needs it to convert device-pixel gestures into map pixels.
         NativeBridge.setZoom(zoom)
+        applySurfaceScale()
+    }
+
+    private fun applySurfaceScale() {
+        val holder = mSurface?.holder ?: return
+        val metrics = resources.displayMetrics
+        val width = (metrics.widthPixels / zoom).toInt().coerceAtLeast(MIN_SURFACE_PX)
+        val height = (metrics.heightPixels / zoom).toInt().coerceAtLeast(MIN_SURFACE_PX)
+        // SDL sees this as a window resize and openbw reallocates its surfaces.
+        holder.setFixedSize(width, height)
     }
 
     private val pollStatus = object : Runnable {
@@ -235,6 +260,7 @@ class ViewerActivity : SDLActivity() {
                     appliedInitialState = true
                     NativeBridge.setHudVisible(hudVisible)
                     NativeBridge.setZoom(zoom)
+                    applySurfaceScale()
                 }
                 val status = NativeBridge.status()
                 playPauseButton.setImageResource(
@@ -290,6 +316,12 @@ class ViewerActivity : SDLActivity() {
 
         private const val MIN_ZOOM = 0.5f
         private const val MAX_ZOOM = 8f
+
+        /** Discrete steps: each one recreates the SDL surface. */
+        private val ZOOM_LEVELS = floatArrayOf(1f, 1.5f, 2f, 3f, 4f, 6f, 8f)
+
+        /** Never hand SDL a surface so small the game is unreadable. */
+        private const val MIN_SURFACE_PX = 240
 
         private val SPEEDS = floatArrayOf(0.25f, 0.5f, 1f, 2f, 4f, 8f, 16f)
         private const val DEFAULT_SPEED_INDEX = 2
