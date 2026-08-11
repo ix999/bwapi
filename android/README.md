@@ -76,6 +76,24 @@ because SDL's `HIDDeviceManager.java` is built from the same submodule and
 binds to native methods that no longer exist. Only the shared/static/test
 switches are safe to set.
 
+### Don't zoom with openbw's view_scale
+
+`ui_functions` has a `view_scale` field and a tempting commented-out line in
+`resize()` that looks like the way to magnify. It is not: `view_scale` is never
+applied to rendering. `screen_tile_bounds()` uses `view_width`/`view_height`
+only to choose which tiles to draw, and `update()` finishes with a **1:1**
+`rgba_surface -> window_surface` blit. Shrinking the view to magnify therefore
+draws terrain across part of the window and leaves the rest as whatever was in
+the buffer before — at 2x, roughly the top-left quarter is the only part drawn.
+
+Magnification comes from the Android side instead: the viewer calls
+`setFixedSize` on SDL's surface to render fewer pixels and lets the compositor
+scale them up to the display. openbw always draws 1:1 over the whole window,
+and the software renderer fills fewer pixels, which is faster.
+
+The engine is still told the zoom factor, but only to convert device-pixel
+gestures into map pixels.
+
 ## Game data
 
 The app cannot ship Blizzard's data files. On first launch it asks for three
@@ -164,6 +182,28 @@ otherwise be unreachable.
 Inside the viewer, **Replays** in the top bar lists the library and switches
 replay in place. The engine rebinds without reloading the mpqs or the image
 data, so the swap is quick, and a paused viewer stays paused across it.
+
+## Interaction
+
+The app owns every touch. `GameTouchView` covers the game surface and consumes
+the events, turning them into explicit engine commands, so openbw receives no
+input at all and its built-in minimap, drag-select and replay slider are
+unreachable. Only the app's own controls take touches of their own.
+
+| Gesture | Effect |
+| --- | --- |
+| Drag | Pans; the map tracks the finger |
+| Pinch | Zooms, snapping to discrete levels |
+| Tap | Selects the unit underneath |
+| Long press | Follows that unit; again on the same unit releases it |
+
+Following resolves the unit through `get_unit()` every frame, which returns
+null once it dies or its slot is recycled — so the camera releases itself
+rather than tracking a corpse or jumping to whatever reused the slot.
+
+openbw's own console and minimap are hidden by default, since they are driven
+by input the engine no longer receives. The **HUD** button brings them back for
+reference.
 
 ## How it fits together
 
