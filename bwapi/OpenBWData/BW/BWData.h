@@ -345,6 +345,43 @@ struct Player {
   void setResearched(int tech, bool researched);
   void setMinerals(int value);
   void setGas(int value);
+
+  void mirrorFingerprint(struct PlayerMirrorFingerprint* dst, bool needCapabilities, bool needScores) const;
+};
+
+// Player mirror fingerprint (sb-perf player mirror skip): the exact engine-side inputs
+// consumed by PlayerImpl::updateData(). That function rebuilds a player's whole capability
+// table every frame — 61 upgrades x3, 44 techs x3, 228 unit-availability and 228x2 unit
+// counts — i.e. ~700 accessor crossings per player per frame, x12 player slots, for data
+// that changes a handful of times per game. One fill call replaces all of them; byte-equal
+// fingerprints across consecutive frames prove the outputs identical, so the recompute can
+// be skipped (guard logic lives BWAPI-side, as for the unit fingerprint above).
+//
+// The fill calls the very same Player:: accessors the mirror calls, from inside this
+// library, so the fingerprint reads exactly what the recompute would read BY CONSTRUCTION
+// — there is no second implementation to drift. The win is purely call-count across the
+// library boundary, which is the same win the unit-side cut measured.
+//
+// Array bounds mirror BW::Constants.h and are static_asserted against it BWAPI-side.
+// Trivially copyable, zero-filled before fill — memcmp-comparable including padding.
+struct PlayerMirrorFingerprint {
+  enum { kRaces = 3, kUnitTypes = 228, kTechTypes = 44, kUpgradeTypes = 61 };
+
+  s32 color, race, type;
+  s32 minerals, gas, cumulative_minerals, cumulative_gas;
+  s32 supplies_available[kRaces], supplies_max[kRaces], supplies_used[kRaces];
+  s32 upgrade_level[kUpgradeTypes];
+  s32 max_upgrade_level[kUpgradeTypes];
+  u8  upgrade_in_progress[kUpgradeTypes];
+  u8  tech_researched[kTechTypes];
+  u8  tech_available[kTechTypes];
+  u8  tech_in_progress[kTechTypes];
+  u8  unit_available[kUnitTypes];
+  s32 units_dead[kUnitTypes];
+  s32 units_killed[kUnitTypes];
+  s32 all_units_lost, all_buildings_lost, all_factories_lost;
+  s32 all_units_killed, all_buildings_razed, all_factories_razed;
+  s32 unit_score, kill_score, building_score, razing_score, custom_score;
 };
 
 // Mirror fingerprint (sb-perf mirror cut 2): the exact engine-side inputs consumed by

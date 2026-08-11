@@ -2108,6 +2108,82 @@ int Player::downloadStatus() const
   return 100;
 }
 
+// See PlayerMirrorFingerprint in BWData.h. Deliberately implemented by calling the same
+// accessors PlayerImpl::updateData() calls, from inside this library: the fingerprint then
+// reads exactly what the recompute reads by construction, and the only thing that changes
+// is that ~700 crossings of the library boundary become one. Any accessor added to
+// PlayerImpl::updateData() must be added here too, or the skip goes stale — grep
+// PlayerImpl.cpp when in doubt (the unit-side analogue of this rule caught the TvT
+// remaining_build_time miss).
+void Player::mirrorFingerprint(PlayerMirrorFingerprint* dst, bool needCapabilities, bool needScores) const
+{
+  std::memset(dst, 0, sizeof(*dst));
+
+  dst->color = playerColorIndex();
+  dst->race  = nRace();
+  dst->type  = nType();
+
+  dst->minerals            = minerals();
+  dst->gas                 = gas();
+  dst->cumulative_minerals = cumulativeMinerals();
+  dst->cumulative_gas      = cumulativeGas();
+
+  for (int i = 0; i != PlayerMirrorFingerprint::kRaces; ++i) {
+    dst->supplies_available[i] = suppliesAvailable(i);
+    dst->supplies_max[i]       = suppliesMax(i);
+    dst->supplies_used[i]      = suppliesUsed(i);
+  }
+
+  // Fill only what the branch in force will actually consume. The hidden-player branches
+  // zero these arrays instead of reading them, so fingerprinting them there costs ~700 reads
+  // per player per frame to detect changes in values nobody looks at. (Measured: filling
+  // unconditionally made BW::Player::unitAvailability 21% MORE expensive than not skipping
+  // at all, because the recompute had been skipping hidden players and the fill was not.)
+  if (needCapabilities) {
+    for (int i = 0; i != PlayerMirrorFingerprint::kUpgradeTypes; ++i) {
+      dst->upgrade_level[i]       = currentUpgradeLevel(i);
+      dst->max_upgrade_level[i]   = maxUpgradeLevel(i);
+      dst->upgrade_in_progress[i] = upgradeInProgress(i) ? 1 : 0;
+    }
+
+    for (int i = 0; i != PlayerMirrorFingerprint::kTechTypes; ++i) {
+      dst->tech_researched[i]  = techResearched(i) ? 1 : 0;
+      dst->tech_available[i]   = techAvailable(i) ? 1 : 0;
+      dst->tech_in_progress[i] = techResearchInProgress(i) ? 1 : 0;
+    }
+
+    for (int i = 0; i != PlayerMirrorFingerprint::kUnitTypes; ++i)
+      dst->unit_available[i] = unitAvailability(i) ? 1 : 0;
+  } else {
+    // The hidden branch still reads currentUpgradeLevel for units we have seen.
+    for (int i = 0; i != PlayerMirrorFingerprint::kUpgradeTypes; ++i)
+      dst->upgrade_level[i] = currentUpgradeLevel(i);
+  }
+
+  if (!needScores) return;
+
+  // unitCountsDead/Killed are `return 0` in this engine (BWData.cpp, marked fixme) — index
+  // independent, so one probe covers the whole array and 456 constant reads per player per
+  // frame disappear. If they are ever implemented per type, SB_PLAYER_MIRROR_SKIP=verify
+  // reports it immediately as a deadUnitCount/killedUnitCount diff; that gate is the reason
+  // this shortcut is allowed rather than guessed at.
+  dst->units_dead[0]   = unitCountsDead(0);
+  dst->units_killed[0] = unitCountsKilled(0);
+
+  dst->all_units_lost      = allUnitsLost();
+  dst->all_buildings_lost  = allBuildingsLost();
+  dst->all_factories_lost  = allFactoriesLost();
+  dst->all_units_killed    = allUnitsKilled();
+  dst->all_buildings_razed = allBuildingsRazed();
+  dst->all_factories_razed = allFactoriesRazed();
+
+  dst->unit_score     = allUnitScore();
+  dst->kill_score     = allKillScore();
+  dst->building_score = allBuildingScore();
+  dst->razing_score   = allRazingScore();
+  dst->custom_score   = customScore();
+}
+
 void Player::setRace(int race)
 {
   if (!impl->vars.is_multi_player) {

@@ -131,7 +131,50 @@ namespace BWAPI
       s32 _refundedGas;
 
       bool wasSeenByBWAPIPlayer = false;
-	
+
+      // ---- player mirror skip (sb-perf) --------------------------------------------------
+      // updateData() rebuilds this player's whole capability table every frame from ~700
+      // engine accessor crossings, for data that changes a handful of times per game. The
+      // engine-side fingerprint (BW::PlayerMirrorFingerprint) collapses those crossings to
+      // one; when it AND the BWAPI-side inputs the engine cannot see are byte-unchanged, the
+      // recompute is skipped. Same structure as the unit-side cut in UnitUpdate.cpp.
+      //
+      // MirrorExtra carries the INPUTS updateData() reads that are not engine state: the
+      // repaired/refunded accumulators, which live on this object and are written by BWAPI
+      // event handlers. Copied verbatim, never hashed — a hash would make rule 9
+      // probabilistic.
+      struct MirrorExtra {
+        s32  repairedMinerals, repairedGas, refundedMinerals, refundedGas;
+        u8   hideCapabilities;   // resolved branch decision, block A
+        u8   hideScores;         // resolved branch decision, block B
+        u8   neutral;
+        u8   pad;
+      };
+
+      // mirrorOutSnap is the OUTPUT side of the guard, and it is what makes this safe against
+      // writers we have not enumerated. BWAPI applies latency compensation to player
+      // resources: issuing a build/train/research command immediately deducts the cost from
+      // self->minerals (CommandTemp.h), and cancelling refunds it — writes the engine-side
+      // fingerprint cannot see, exactly like the unit-side prediction hole. Rather than list
+      // the fields CommandTemp.h touches and hope the list stays current, we remember the
+      // exact PlayerData the last recompute produced and refuse to skip if anything has
+      // changed it since. That covers every external writer by construction, present and
+      // future. (Found by SB_PLAYER_MIRROR_SKIP=verify, which reported 22 diffs at
+      // PlayerData offset 80 = minerals before this guard existed.)
+      BW::PlayerMirrorFingerprint mirrorSnap{};
+      MirrorExtra mirrorExtraSnap{};
+      PlayerData  mirrorOutSnap{};
+      bool mirrorSnapValid = false;
+      int  mirrorStreak = 0;
+
+      // SB_PLAYER_MIRROR_SKIP: unset/1 = on (default), 0 = off (kill-switch),
+      // verify = recompute anyway and byte-compare the outputs (the microscope).
+      static long long mirrorSkipCount;
+      static long long mirrorRecomputeCount;
+
+      static bool playerMirrorSkipEnabled();
+      static bool playerMirrorVerifyMode();
+
 #ifdef COMPAT
       CompatPlayerImpl compatPlayerImpl{this};
 #endif

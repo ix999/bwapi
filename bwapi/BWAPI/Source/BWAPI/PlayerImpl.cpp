@@ -3,9 +3,13 @@
 #include "UnitImpl.h"
 
 #include <string>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <Util/Convenience.h>
 
 #include <BW/BWData.h>
+#include "BW/Constants.h"
 
 #include <BWAPI/PlayerType.h>
 
@@ -125,17 +129,118 @@ namespace BWAPI
            bwplayer.PlayerVictory() == 6;
   }
   //--------------------------------------------- UPDATE -----------------------------------------------------
+  // SB_PLAYER_MIRROR_SKIP: unset/1 = on (default), 0 = off (kill-switch), verify = recompute
+  // anyway and byte-compare the outputs. Read once; std::getenv is not hot-path safe.
+  bool PlayerImpl::playerMirrorSkipEnabled()
+  {
+    static const bool on = [] {
+      const char* v = std::getenv("SB_PLAYER_MIRROR_SKIP");
+      return !v || (std::strcmp(v, "0") != 0);
+    }();
+    return on;
+  }
+
+  bool PlayerImpl::playerMirrorVerifyMode()
+  {
+    static const bool verify = [] {
+      const char* v = std::getenv("SB_PLAYER_MIRROR_SKIP");
+      return v && std::strcmp(v, "verify") == 0;
+    }();
+    return verify;
+  }
+
+  // Skip-rate telemetry: a guard that never fires must be visible rather than inferred
+  // from a flat wall-clock number. Printed once per game from onGameEnd.
+  long long PlayerImpl::mirrorSkipCount = 0;
+  long long PlayerImpl::mirrorRecomputeCount = 0;
+
   void PlayerImpl::updateData()
-  { 
+  {
     GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3)
+
+    // Bounds the fingerprint shares with BW::Constants.h. A mismatch would silently
+    // fingerprint fewer entries than the recompute reads, which is exactly the class of
+    // hole the unit-side cut had to hunt down.
+    static_assert(BW::PlayerMirrorFingerprint::kRaces        == BW::RACE_COUNT,         "fingerprint race bound");
+    static_assert(BW::PlayerMirrorFingerprint::kUnitTypes    == BW::UNIT_TYPE_COUNT,    "fingerprint unit-type bound");
+    static_assert(BW::PlayerMirrorFingerprint::kTechTypes    == BW::TECH_TYPE_COUNT,    "fingerprint tech bound");
+    static_assert(BW::PlayerMirrorFingerprint::kUpgradeTypes == BW::UPGRADE_TYPE_COUNT, "fingerprint upgrade bound");
+
+    // The two branch decisions below, resolved once and reused: the skip must key on them,
+    // because the same engine state produces different outputs on either side of them.
+    // Expressions and short-circuit order are copied verbatim from the bodies they guard.
+    const bool hiddenToUs = !game.isReplay() &&
+                            game.self()->isEnemy(this) &&
+                            !game.isFlagEnabled(Flag::CompleteMapInformation);
+    const bool hideCapabilities = this->isNeutral() || index >= BW::PLAYER_COUNT || hiddenToUs;
+    const bool hideScores       = hiddenToUs || index >= BW::PLAYER_COUNT;
+
+    // Slots with no engine-side player never touch bwplayer (its accessors are .at()-checked
+    // and would throw), so they take neither the fingerprint nor the skip. They are also the
+    // cheap case already — everything below is zeroed for them.
+    bool verifying = false;
+    PlayerData verifySnap;
+    if (playerMirrorSkipEnabled() && index < BW::PLAYER_COUNT)
+    {
+      BW::PlayerMirrorFingerprint now;
+      bwplayer.mirrorFingerprint(&now, !hideCapabilities, !hideScores);
+
+      MirrorExtra extra{};
+      extra.repairedMinerals  = _repairedMinerals;
+      extra.repairedGas       = _repairedGas;
+      extra.refundedMinerals  = _refundedMinerals;
+      extra.refundedGas       = _refundedGas;
+      extra.hideCapabilities = hideCapabilities ? 1 : 0;
+      extra.hideScores       = hideScores ? 1 : 0;
+      extra.neutral          = this->isNeutral() ? 1 : 0;
+
+      // Three conditions, and the third is the one that makes this safe: engine inputs
+      // unchanged, hidden BWAPI-side inputs unchanged, AND nothing has written our own
+      // outputs since we produced them (latency-compensated resources, chiefly).
+      if (mirrorSnapValid &&
+          std::memcmp(&now,   &mirrorSnap,      sizeof(now))        == 0 &&
+          std::memcmp(&extra, &mirrorExtraSnap, sizeof(extra))      == 0 &&
+          std::memcmp(self,   &mirrorOutSnap,   sizeof(PlayerData)) == 0)
+      {
+        // Skip only from the SECOND consecutive unchanged frame, matching the unit-side
+        // rule: one full recompute must have run against exactly these inputs before its
+        // outputs can be assumed still current.
+        if (mirrorStreak >= 1)
+        {
+          if (playerMirrorVerifyMode())
+          {
+            verifying = true;
+            verifySnap = *self;   // retained outputs; recompute below must reproduce them
+          }
+          else
+          {
+            // The visible branch sets this every frame; preserve that observable.
+            if (!hideCapabilities) this->wasSeenByBWAPIPlayer = true;
+            ++mirrorSkipCount;
+            return;
+          }
+        }
+        else
+          ++mirrorStreak;
+      }
+      else
+      {
+        mirrorSnap      = now;
+        mirrorExtraSnap = extra;
+        mirrorSnapValid = true;
+        mirrorStreak    = 0;
+      }
+    }
+    else
+    {
+      mirrorSnapValid = false;
+      mirrorStreak    = 0;
+    }
+
     self->color = index < BW::PLAYER_COUNT ? bwplayer.playerColorIndex() : 0;
-  
+
     // Get upgrades, tech, resources
-    if ( this->isNeutral() || 
-      index >= BW::PLAYER_COUNT ||
-         (!game.isReplay() && 
-          game.self()->isEnemy(this) && 
-          !game.isFlagEnabled(Flag::CompleteMapInformation)) )
+    if ( hideCapabilities )
     {
       self->minerals           = 0;
       self->gas                = 0;
@@ -212,10 +317,7 @@ namespace BWAPI
     }
 
     // Get Scores, supply
-    if ( (!game.isReplay() && 
-          game.self()->isEnemy(this) && 
-          !game.isFlagEnabled(Flag::CompleteMapInformation)) ||
-          index >= BW::PLAYER_COUNT)
+    if ( hideScores )
     {
       MemZero(self->supplyTotal);
       MemZero(self->supplyUsed);
@@ -270,10 +372,45 @@ namespace BWAPI
     {
       self->leftGame = true;
     }
+
+    // verify mode: the recompute just ran on a frame the fingerprint said was skippable, so
+    // its outputs MUST equal the retained ones. Any difference IS a fingerprint hole — an
+    // input updateData() reads that the fingerprint (or MirrorExtra) does not cover. Printed
+    // byte-exact so the missing field can be identified from the PlayerData offset.
+    ++mirrorRecomputeCount;
+
+    // Remember exactly what this recompute produced, so the next frame can tell whether
+    // anyone else has written it since (see mirrorOutSnap in PlayerImpl.h).
+    if (playerMirrorSkipEnabled() && index < BW::PLAYER_COUNT)
+      mirrorOutSnap = *self;
+
+    if (verifying && std::memcmp(&verifySnap, self, sizeof(PlayerData)) != 0)
+    {
+      const char* a = reinterpret_cast<const char*>(&verifySnap);
+      const char* b = reinterpret_cast<const char*>(self);
+      for (std::size_t i = 0; i != sizeof(PlayerData); ++i)
+      {
+        if (a[i] != b[i])
+        {
+          std::printf("PLAYER-MIRROR-VERIFY-DIFF f=%d player=%d offset=%zu retained=%d fresh=%d\n",
+                      game.getFrameCount(), index, i,
+                      (int)(unsigned char)a[i], (int)(unsigned char)b[i]);
+          break;
+        }
+      }
+    }
   }
   //----------------------------------------------------------------------------------------------------------
   void PlayerImpl::onGameEnd()
   {
+    if (mirrorSkipCount + mirrorRecomputeCount > 0)
+    {
+      const long long total = mirrorSkipCount + mirrorRecomputeCount;
+      std::printf("PLAYERMIRROR skipped=%lld recomputed=%lld rate=%.1f%%\n",
+                  mirrorSkipCount, mirrorRecomputeCount, 100.0 * mirrorSkipCount / total);
+      mirrorSkipCount = 0;
+      mirrorRecomputeCount = 0;
+    }
     this->units.clear();
     this->clientInfo.clear();
     this->interfaceEvents.clear();
