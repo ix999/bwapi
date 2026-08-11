@@ -175,6 +175,7 @@ namespace BWAPI
   // Skip-rate telemetry: a guard that never fires must be visible rather than inferred
   // from a flat wall-clock number. Printed once per game from onGameEnd.
   long long PlayerImpl::mirrorSkipCount = 0;
+  long long PlayerImpl::mirrorDormantCount = 0;
   long long PlayerImpl::mirrorRecomputeCount = 0;
 
   void PlayerImpl::updateData()
@@ -198,6 +199,21 @@ namespace BWAPI
     const bool hideCapabilities = this->isNeutral() || index >= BW::PLAYER_COUNT || hiddenToUs;
     const bool hideScores       = hiddenToUs || index >= BW::PLAYER_COUNT;
 
+    // Dormant-slot fast path. An empty slot has no engine-side player, so nothing can change
+    // its PlayerData once the first update has zeroed it — and skipping here means neither its
+    // PlayerData nor its guard is touched again, so both fall out of the working set entirely.
+    // In a 1v1 that is 9 of 12 slots, and dual-host carries two sets. Verify mode deliberately
+    // does NOT take this path, so a wrong dormancy call shows up as a byte diff.
+    if (index < BW::PLAYER_COUNT && !playerMirrorVerifyMode())
+    {
+      const int ptype = bwplayer.nType();
+      if (ptype == (int)PlayerTypes::Enum::None && mirrorDormantType == ptype)
+      {
+        ++mirrorDormantCount;
+        return;
+      }
+    }
+
     // Slots with no engine-side player never touch bwplayer (its accessors are .at()-checked
     // and would throw), so they take neither the fingerprint nor the skip. They are also the
     // cheap case already — everything below is zeroed for them.
@@ -205,6 +221,8 @@ namespace BWAPI
     PlayerData verifySnap;
     if (playerMirrorSkipEnabled() && index < BW::PLAYER_COUNT)
     {
+      if (!mirrorGuard) mirrorGuard.reset(new MirrorGuard());
+
       BW::PlayerMirrorFingerprint now;
       bwplayer.mirrorFingerprint(&now, !hideCapabilities, !hideScores);
 
@@ -221,9 +239,9 @@ namespace BWAPI
       // unchanged, hidden BWAPI-side inputs unchanged, AND nothing has written our own
       // outputs since we produced them (latency-compensated resources, chiefly).
       if (mirrorSnapValid &&
-          std::memcmp(&now,   &mirrorSnap,      sizeof(now))        == 0 &&
-          std::memcmp(&extra, &mirrorExtraSnap, sizeof(extra))      == 0 &&
-          playerDataOutputsUnchanged(self, &mirrorOutSnap))
+          std::memcmp(&now,   &mirrorGuard->snap,      sizeof(now))   == 0 &&
+          std::memcmp(&extra, &mirrorGuard->extraSnap, sizeof(extra)) == 0 &&
+          playerDataOutputsUnchanged(self, &mirrorGuard->outSnap))
       {
         // Skip only from the SECOND consecutive unchanged frame, matching the unit-side
         // rule: one full recompute must have run against exactly these inputs before its
@@ -248,8 +266,8 @@ namespace BWAPI
       }
       else
       {
-        mirrorSnap      = now;
-        mirrorExtraSnap = extra;
+        mirrorGuard->snap      = now;
+        mirrorGuard->extraSnap = extra;
         mirrorSnapValid = true;
         mirrorStreak    = 0;
       }
@@ -404,8 +422,12 @@ namespace BWAPI
 
     // Remember exactly what this recompute produced, so the next frame can tell whether
     // anyone else has written it since (see mirrorOutSnap in PlayerImpl.h).
-    if (playerMirrorSkipEnabled() && index < BW::PLAYER_COUNT)
-      mirrorOutSnap = *self;
+    if (playerMirrorSkipEnabled() && index < BW::PLAYER_COUNT && mirrorGuard)
+      mirrorGuard->outSnap = *self;
+
+    // Record dormancy only after a full recompute has settled this slot's outputs.
+    mirrorDormantType = (index < BW::PLAYER_COUNT && bwplayer.nType() == PlayerTypes::Enum::None)
+                          ? (int)PlayerTypes::Enum::None : -1;
 
     if (verifying && std::memcmp(&verifySnap, self, sizeof(PlayerData)) != 0)
     {
@@ -426,12 +448,14 @@ namespace BWAPI
   //----------------------------------------------------------------------------------------------------------
   void PlayerImpl::onGameEnd()
   {
-    if (mirrorSkipCount + mirrorRecomputeCount > 0)
+    if (mirrorSkipCount + mirrorRecomputeCount + mirrorDormantCount > 0)
     {
       const long long total = mirrorSkipCount + mirrorRecomputeCount;
-      std::printf("PLAYERMIRROR skipped=%lld recomputed=%lld rate=%.1f%%\n",
-                  mirrorSkipCount, mirrorRecomputeCount, 100.0 * mirrorSkipCount / total);
+      std::printf("PLAYERMIRROR skipped=%lld dormant=%lld recomputed=%lld rate=%.1f%%\n",
+                  mirrorSkipCount, mirrorDormantCount, mirrorRecomputeCount,
+                  100.0 * mirrorSkipCount / total);
       mirrorSkipCount = 0;
+      mirrorDormantCount = 0;
       mirrorRecomputeCount = 0;
     }
     this->units.clear();

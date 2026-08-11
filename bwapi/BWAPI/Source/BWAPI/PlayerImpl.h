@@ -1,6 +1,7 @@
 #pragma once
 #include <Util/Types.h>
 #include <string>
+#include <memory>
 
 #include <BWAPI/Player.h>
 #include <BWAPI/Client/PlayerData.h>
@@ -161,15 +162,33 @@ namespace BWAPI
       // changed it since. That covers every external writer by construction, present and
       // future. (Found by SB_PLAYER_MIRROR_SKIP=verify, which reported 22 diffs at
       // PlayerData offset 80 = minerals before this guard existed.)
-      BW::PlayerMirrorFingerprint mirrorSnap{};
-      MirrorExtra mirrorExtraSnap{};
-      PlayerData  mirrorOutSnap{};
+      // The guard's snapshots are ~6.8 KB per player and were inline members, so all 12 slots
+      // carried them whether or not anyone was in them. Held behind a pointer and allocated on
+      // first non-dormant update instead: in a 1v1 only 2 slots plus neutral ever occupy a slot,
+      // so 9 of 12 never allocate it at all. Dual-host holds two sets of these, and L2 capacity
+      // is the binding constraint there (benchmarks/ENGINE_VS_ENGINE.md).
+      struct MirrorGuard {
+        BW::PlayerMirrorFingerprint snap{};
+        MirrorExtra extraSnap{};
+        PlayerData  outSnap{};
+      };
+      std::unique_ptr<MirrorGuard> mirrorGuard;
       bool mirrorSnapValid = false;
       int  mirrorStreak = 0;
+
+      // Dormant-slot fast path. An unoccupied slot (nType None) has no engine-side player state
+      // that anything can change, so once one settling recompute has zeroed its PlayerData it
+      // needs neither the recompute nor the guard — and, more to the point, neither its 5.8 KB
+      // of PlayerData nor its 6.8 KB of guard is touched again, so both leave the working set.
+      // Keyed on the slot being EMPTY rather than on a hardcoded player count: the map pool has
+      // 4-player maps, and this stays correct for any occupancy, including a player leaving
+      // (nType flips to PlayerLeft and the slot wakes up).
+      int mirrorDormantType = -1;   // nType() at the last settle; -1 = not settled dormant
 
       // SB_PLAYER_MIRROR_SKIP: unset/1 = on (default), 0 = off (kill-switch),
       // verify = recompute anyway and byte-compare the outputs (the microscope).
       static long long mirrorSkipCount;
+      static long long mirrorDormantCount;
       static long long mirrorRecomputeCount;
 
       static bool playerMirrorSkipEnabled();
