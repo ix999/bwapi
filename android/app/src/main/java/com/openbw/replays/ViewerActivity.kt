@@ -3,16 +3,20 @@ package com.openbw.replays
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.libsdl.app.SDLActivity
 import java.io.File
 import java.util.Locale
@@ -26,8 +30,12 @@ import java.util.Locale
  *
  * The app owns every interaction. A GameTouchView covers the game and turns
  * gestures into explicit engine commands — drag pans, pinch zooms, tap selects,
- * long press follows — so openbw itself receives no input at all and its
- * built-in minimap, drag-select and replay slider are unreachable.
+ * long press follows — so openbw itself receives no input at all.
+ *
+ * Transport lives in this overlay instead: the bottom bar has the replay
+ * slider, play/pause, elapsed and total time, speed and zoom. openbw draws its
+ * own slider and minimap, but they are mouse driven and the engine no longer
+ * sees a mouse, so those are switched off rather than left as dead decoration.
  */
 class ViewerActivity : SDLActivity() {
 
@@ -124,6 +132,8 @@ class ViewerActivity : SDLActivity() {
             NativeBridge.setHudVisible(hudVisible)
         }
 
+        applyWindowInsets(overlay)
+
         seekBar.max = SEEK_RESOLUTION
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -141,6 +151,49 @@ class ViewerActivity : SDLActivity() {
 
         speedButton.text = formatSpeed(SPEEDS[speedIndex])
         titleLabel.text = currentReplayName
+    }
+
+    /**
+     * Keeps the control bars clear of the status bar, navigation bar and any
+     * display cutout.
+     *
+     * The viewer is fullscreen and landscape, so without this the seek bar can
+     * sit under the gesture-navigation pill — visible but impossible to drag —
+     * and the bars can run under a notch on the short edge.
+     */
+    private fun applyWindowInsets(overlay: View) {
+        val topBar = overlay.findViewById<View>(R.id.top_bar)
+        val bottomBar = overlay.findViewById<View>(R.id.bottom_bar)
+
+        // Insets are added to the padding the layout already declares rather
+        // than replacing it, so the bars keep their own spacing.
+        val topBase = Rect(
+            topBar.paddingLeft, topBar.paddingTop, topBar.paddingRight, topBar.paddingBottom
+        )
+        val bottomBase = Rect(
+            bottomBar.paddingLeft, bottomBar.paddingTop,
+            bottomBar.paddingRight, bottomBar.paddingBottom,
+        )
+
+        ViewCompat.setOnApplyWindowInsetsListener(overlay) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            topBar.setPadding(
+                topBase.left + bars.left,
+                topBase.top + bars.top,
+                topBase.right + bars.right,
+                topBase.bottom,
+            )
+            bottomBar.setPadding(
+                bottomBase.left + bars.left,
+                bottomBase.top,
+                bottomBase.right + bars.right,
+                bottomBase.bottom + bars.bottom,
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(overlay)
     }
 
     /**

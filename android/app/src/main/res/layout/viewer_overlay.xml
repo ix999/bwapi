@@ -2,8 +2,9 @@
 <!--
     Laid over SDL's surface. GameTouchView consumes every touch over the game
     and turns it into an explicit engine command, so openbw never receives
-    input and its built-in minimap, drag-select and replay slider cannot be
-    reached. All interaction belongs to the controls in this file.
+    input. Every control the viewer offers — including the replay slider — is
+    in this file; openbw's own mouse-driven slider and minimap are switched off
+    because the engine no longer sees a mouse.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -22,6 +23,7 @@
 
     <!-- Which replay is playing, and the way to change it. -->
     <LinearLayout
+        android:id="@+id/top_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
@@ -63,6 +65,7 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
@@ -84,11 +87,14 @@
             android:contentDescription="@string/viewer_play_pause"
             android:src="@android:drawable/ic_media_pause" />
 
+        <!-- Sized for a thumb: the default track is a hard target while scrubbing. -->
         <SeekBar
             android:id="@+id/seek_bar"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp" />
 
         <TextView
             android:id="@+id/time_label"
