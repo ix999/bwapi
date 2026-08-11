@@ -398,16 +398,21 @@ struct PlayerMirrorFingerprint {
 // blocks so every union-derived read is covered without per-type field logic. Trivially
 // copyable, zero-filled before fill — memcmp-comparable including padding.
 struct MirrorFingerprint {
-  // Layout is packing-ordered (8-byte fields, then 4-byte, then 1-byte) so the struct carries no
-  // interior padding: it is memcmp'd every frame for every unit in every viewer, and under
-  // dual-host that traffic is the largest single consumer of a small L2. Field ORDER here is
-  // arbitrary for correctness — only the byte image matters, and memset() zeroes any tail padding
-  // before the fill, so the comparison stays exact.
+  // Width-narrowed with CHECKED conversions (see fp_u8/fp_u16/fp_s16 in BWData.cpp). The engine
+  // declares every one of these `int`, so the narrower width is justified per field from what can
+  // actually be assigned — never from what a sample game happened to contain. A silent truncation
+  // would produce an EQUAL fingerprint for a CHANGED unit, i.e. a stale mirror, so every narrowed
+  // field is range-checked at fill time and fails loudly instead. Bounds are recorded in
+  // docs/design/ENGINE_OPT_MIRROR.md; two look like u8 candidates and are NOT:
+  //   remove_timer         up to 1800  (Broodling 1800, hallucination 1350, callers 900/360/90)
+  //   remaining_build_time up to 65535 (assigned 0xffff directly)
   //
-  // kRawBlocks is the EXACT sum of the three unit_t blocks copied verbatim (union 48 + worker 64
-  // + building 104). It was 320 — a round number 104 bytes larger than anything ever written, i.e.
-  // 104 bytes per unit per viewer of guaranteed-zero padding being compared every frame. BWData.cpp
-  // static_asserts equality in BOTH directions so this cannot silently drift or bloat again.
+  // Layout is packing-ordered (8, then 4, then 2, then 1 byte) so there is no interior padding:
+  // this struct is memcmp'd every frame for every unit in every viewer, and that compare is 38.7%
+  // of all last-level read misses under dual-host, so its WIDTH is the cost that matters.
+  //
+  // kRawBlocks is the EXACT sum of the three unit_t blocks (union 48 + worker 64 + building 104);
+  // BWData.cpp static_asserts equality in both directions.
   enum { kRawBlocks = 216 };
 
   u64 sprite, main_image, unit_type, order_type, sec_order_type;
@@ -415,31 +420,34 @@ struct MirrorFingerprint {
   u64 sub_sprite, sub_main_image;
   u64 build_queue[5];
 
-  s32 pos_x, pos_y;
-  s32 sprite_visibility, image_anim, image_frameset;
-  s32 owner;
-  s32 main_order_timer, ground_cd, air_cd, spell_cd;
-  s32 status_flags, carrying_flags, movement_state, movement_flags;
-  u32 detected_flags;
-  s32 hp_raw, shield_raw, energy_raw;
-  s32 heading, vel_x, vel_y;
-  s32 mt_x, mt_y, ot_x, ot_y;
-  s32 kill_count, acid_spore_count, parasite_flags, blinded_by, storm_timer;
-  s32 remove_timer, dm_timer, dm_hp_raw, stim_timer, ensnare_timer;
-  s32 lockdown_timer, irradiate_timer, stasis_timer, plague_timer, maelstrom_timer;
-  s32 remaining_build_time;
-  s32 sub_ground_cd, sub_air_cd, sub_anim, sub_frameset;
+  // 32-bit by necessity: wide bitfields and fp8 fixed-point values.
+  s32 status_flags;        // ~28-bit mask
+  u32 detected_flags;      // full 0xFFFFFFFF
+  s32 hp_raw, shield_raw, energy_raw, dm_hp_raw;
+  s32 kill_count;          // only `= 0` and `+= target->kill_count`, no clamp anywhere: unbounded
 
-  // build_queue is a fixed-capacity 5-element container, so its size fits a byte by construction —
-  // this is a TYPE-safe narrowing, not a "the value is probably small" one. The int-typed timers
-  // above are deliberately NOT narrowed: the engine declares them int, and shrinking them on the
-  // assumption that they stay small would silently miss a change and go stale.
-  u8 build_queue_size;
+  u16 pos_x, pos_y, mt_x, mt_y, ot_x, ot_y;   // map max 256 tiles x 32 px = 8192
+  u16 remove_timer;                            // <= 1800
+  u16 remaining_build_time;                    // <= 65535, no headroom
+  u16 sprite_visibility, image_frameset, sub_frameset;
+  s16 vel_x, vel_y;                            // fp8 velocity
+
+  u8 owner;                                    // 0-11
+  u8 main_order_timer;                         // <= 93
+  u8 ground_cd, air_cd, sub_ground_cd, sub_air_cd;  // clamped [5,250] + rand[-1,+2] => <= 252
+  u8 spell_cd;
+  u8 carrying_flags, movement_state, movement_flags;
+  u8 acid_spore_count;                         // <= 9 (std::array<int,9> acid_spore_time)
+  u8 parasite_flags, blinded_by;
+  u8 storm_timer, dm_timer, stim_timer, ensnare_timer;
+  u8 lockdown_timer, irradiate_timer, stasis_timer, plague_timer, maelstrom_timer;
+  u8 image_anim, sub_anim;
+  s8 heading;                                  // direction_t is 8-bit
+  u8 build_queue_size;                         // fixed-capacity 5 container
   u8 sub_present;
 
   u8 raw_blocks[kRawBlocks];
 };
-
 
 struct Unit {
   bwgame::unit_t* u = nullptr;

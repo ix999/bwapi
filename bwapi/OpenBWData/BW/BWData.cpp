@@ -2538,69 +2538,94 @@ int Unit::isBlind() const
   return u->blinded_by;
 }
 
+
+// Checked narrowing for MirrorFingerprint. A silent truncation here would make a CHANGED unit
+// produce an UNCHANGED fingerprint — the mirror would then be skipped and go stale, which is the
+// one failure this whole mechanism exists to prevent. So every narrowed field is range-checked and
+// aborts loudly instead. The cost is one compare per field against a 216-byte memcpy; the compare
+// is free next to the cache traffic the narrower struct saves.
+namespace {
+inline u8 fp_u8(int v, const char* f) {
+  if ((unsigned)v > 0xffu) bwgame::error("MirrorFingerprint: %s = %d does not fit u8", f, v);
+  return (u8)v;
+}
+inline u16 fp_u16(int v, const char* f) {
+  if ((unsigned)v > 0xffffu) bwgame::error("MirrorFingerprint: %s = %d does not fit u16", f, v);
+  return (u16)v;
+}
+inline s16 fp_s16(int v, const char* f) {
+  if (v < -32768 || v > 32767) bwgame::error("MirrorFingerprint: %s = %d does not fit s16", f, v);
+  return (s16)v;
+}
+inline s8 fp_s8(int v, const char* f) {
+  if (v < -128 || v > 127) bwgame::error("MirrorFingerprint: %s = %d does not fit s8", f, v);
+  return (s8)v;
+}
+}
+
 void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
 {
   std::memset(dst, 0, sizeof(*dst));
   const bwgame::unit_t* p = u;
-  dst->pos_x = p->position.x;
-  dst->pos_y = p->position.y;
+  dst->pos_x = fp_u16(p->position.x, "pos_x");
+  dst->pos_y = fp_u16(p->position.y, "pos_y");
   const bwgame::sprite_t* s = p->sprite;
   dst->sprite = (u64)(uintptr_t)s;
   if (s)
   {
-    dst->sprite_visibility = (s32)s->visibility_flags;
+    dst->sprite_visibility = fp_u16((int)s->visibility_flags, "sprite_visibility");
     const bwgame::image_t* im = s->main_image;
     dst->main_image = (u64)(uintptr_t)im;
     if (im)
     {
-      dst->image_anim = (s32)im->iscript_state.animation;
-      dst->image_frameset = (s32)im->frame_index_base;
+      dst->image_anim = fp_u8((int)im->iscript_state.animation, "image_anim");
+      dst->image_frameset = fp_u16((int)im->frame_index_base, "image_frameset");
     }
   }
   dst->unit_type = (u64)(uintptr_t)p->unit_type;
-  dst->owner = p->owner;
+  dst->owner = fp_u8(p->owner, "owner");
   dst->order_type = (u64)(uintptr_t)p->order_type;
   dst->sec_order_type = (u64)(uintptr_t)p->secondary_order_type;
-  dst->main_order_timer = p->main_order_timer;
-  dst->ground_cd = p->ground_weapon_cooldown;
-  dst->air_cd = p->air_weapon_cooldown;
-  dst->spell_cd = p->spell_cooldown;
+  dst->main_order_timer = fp_u8(p->main_order_timer, "main_order_timer");
+  dst->ground_cd = fp_u8(p->ground_weapon_cooldown, "ground_cd");
+  dst->air_cd = fp_u8(p->air_weapon_cooldown, "air_cd");
+  dst->spell_cd = fp_u8(p->spell_cooldown, "spell_cd");
   dst->status_flags = p->status_flags;
-  dst->carrying_flags = p->carrying_flags;
-  dst->movement_state = p->movement_state;
-  dst->movement_flags = (s32)p->movement_flags;
+  dst->carrying_flags = fp_u8(p->carrying_flags, "carrying_flags");
+  dst->movement_state = fp_u8(p->movement_state, "movement_state");
+  dst->movement_flags = fp_u8((int)p->movement_flags, "movement_flags");
   dst->detected_flags = p->detected_flags;
   dst->hp_raw = (s32)p->hp.raw_value;
   dst->shield_raw = (s32)p->shield_points.raw_value;
   dst->energy_raw = (s32)p->energy.raw_value;
-  dst->heading = (s32)p->heading.raw_value;
-  dst->vel_x = (s32)p->velocity.x.raw_value;
-  dst->vel_y = (s32)p->velocity.y.raw_value;
-  dst->mt_x = p->move_target.pos.x;
-  dst->mt_y = p->move_target.pos.y;
+  dst->heading = fp_s8((int)p->heading.raw_value, "heading");
+  dst->vel_x = fp_s16((int)p->velocity.x.raw_value, "vel_x");
+  dst->vel_y = fp_s16((int)p->velocity.y.raw_value, "vel_y");
+  dst->mt_x = fp_u16(p->move_target.pos.x, "mt_x");
+  dst->mt_y = fp_u16(p->move_target.pos.y, "mt_y");
   dst->mt_unit = (u64)(uintptr_t)p->move_target.unit;
-  dst->ot_x = p->order_target.pos.x;
-  dst->ot_y = p->order_target.pos.y;
+  dst->ot_x = fp_u16(p->order_target.pos.x, "ot_x");
+  dst->ot_y = fp_u16(p->order_target.pos.y, "ot_y");
   dst->ot_unit = (u64)(uintptr_t)p->order_target.unit;
   dst->subunit = (u64)(uintptr_t)p->subunit;
   dst->connected_unit = (u64)(uintptr_t)p->connected_unit;
   dst->current_build_unit = (u64)(uintptr_t)p->current_build_unit;
   dst->kill_count = p->kill_count;
-  dst->acid_spore_count = p->acid_spore_count;
-  dst->parasite_flags = p->parasite_flags;
-  dst->blinded_by = p->blinded_by;
-  dst->storm_timer = p->storm_timer;
-  dst->remove_timer = p->remove_timer;
-  dst->dm_timer = p->defensive_matrix_timer;
+  dst->acid_spore_count = fp_u8(p->acid_spore_count, "acid_spore_count");
+  dst->parasite_flags = fp_u8(p->parasite_flags, "parasite_flags");
+  dst->blinded_by = fp_u8(p->blinded_by, "blinded_by");
+  dst->storm_timer = fp_u8(p->storm_timer, "storm_timer");
+  dst->remove_timer = fp_u16(p->remove_timer, "remove_timer");
+  dst->dm_timer = fp_u8(p->defensive_matrix_timer, "dm_timer");
   dst->dm_hp_raw = (s32)p->defensive_matrix_hp.raw_value;
-  dst->stim_timer = p->stim_timer;
-  dst->ensnare_timer = p->ensnare_timer;
-  dst->lockdown_timer = p->lockdown_timer;
-  dst->irradiate_timer = p->irradiate_timer;
-  dst->stasis_timer = p->stasis_timer;
-  dst->plague_timer = p->plague_timer;
-  dst->maelstrom_timer = p->maelstrom_timer;
-  dst->remaining_build_time = p->remaining_build_time;
+  dst->stim_timer = fp_u8(p->stim_timer, "stim_timer");
+  dst->ensnare_timer = fp_u8(p->ensnare_timer, "ensnare_timer");
+  dst->lockdown_timer = fp_u8(p->lockdown_timer, "lockdown_timer");
+  dst->irradiate_timer = fp_u8(p->irradiate_timer, "irradiate_timer");
+  dst->stasis_timer = fp_u8(p->stasis_timer, "stasis_timer");
+  dst->plague_timer = fp_u8(p->plague_timer, "plague_timer");
+  dst->maelstrom_timer = fp_u8(p->maelstrom_timer, "maelstrom_timer");
+  dst->remaining_build_time = fp_u16(p->remaining_build_time, "remaining_build_time");
   dst->build_queue_size = (u8)p->build_queue.size();
   for (size_t i = 0; i != p->build_queue.size() && i != 5; ++i)
     dst->build_queue[i] = (u64)(uintptr_t)p->build_queue[i];
@@ -2608,8 +2633,8 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
   if (su)
   {
     dst->sub_present = 1;
-    dst->sub_ground_cd = su->ground_weapon_cooldown;
-    dst->sub_air_cd = su->air_weapon_cooldown;
+    dst->sub_ground_cd = fp_u8(su->ground_weapon_cooldown, "sub_ground_cd");
+    dst->sub_air_cd = fp_u8(su->air_weapon_cooldown, "sub_air_cd");
     const bwgame::sprite_t* ss = su->sprite;
     dst->sub_sprite = (u64)(uintptr_t)ss;
     if (ss)
@@ -2618,8 +2643,8 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
       dst->sub_main_image = (u64)(uintptr_t)sim;
       if (sim)
       {
-        dst->sub_anim = (s32)sim->iscript_state.animation;
-        dst->sub_frameset = (s32)sim->frame_index_base;
+        dst->sub_anim = fp_u8((int)sim->iscript_state.animation, "sub_anim");
+        dst->sub_frameset = fp_u16((int)sim->frame_index_base, "sub_frameset");
       }
     }
   }
