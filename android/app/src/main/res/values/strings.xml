@@ -32,6 +32,9 @@
     <string name="watch_folder_stop_confirm">Stop syncing</string>
 
     <string name="viewer_pick_replay">Replays</string>
+    <string name="viewer_hud">HUD</string>
+    <string name="viewer_following">Following — long press again to release</string>
+    <string name="viewer_follow_released">Follow released</string>
 
     <plurals name="synced_replays">
         <item quantity="one">Imported %1$d new replay</item>

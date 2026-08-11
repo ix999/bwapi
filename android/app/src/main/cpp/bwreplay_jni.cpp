@@ -46,13 +46,13 @@ Java_com_openbw_replays_NativeBridge_nativeIsRunning(JNIEnv*, jclass) {
 // [0] current frame        [1] end frame
 // [2] paused (0/1)         [3] speed  x1000
 // [4] replay loaded (0/1)  [5] finished (0/1)
-// [6] zoom x1000
+// [6] zoom x1000            [7] following (0/1)
 JNIEXPORT jintArray JNICALL
 Java_com_openbw_replays_NativeBridge_nativeGetStatus(JNIEnv* env, jclass) {
 	bwreplay::Status status;
 	bool alive = with_core([&](bwreplay::Core& core) { status = core.status(); });
 
-	jint values[7];
+	jint values[8];
 	values[0] = status.current_frame;
 	values[1] = status.end_frame;
 	values[2] = status.paused ? 1 : 0;
@@ -60,10 +60,11 @@ Java_com_openbw_replays_NativeBridge_nativeGetStatus(JNIEnv* env, jclass) {
 	values[4] = (alive && status.replay_loaded) ? 1 : 0;
 	values[5] = (!alive || status.done) ? 1 : 0;
 	values[6] = (jint)(status.zoom * 1000.0);
+	values[7] = status.following ? 1 : 0;
 
-	jintArray result = env->NewIntArray(7);
+	jintArray result = env->NewIntArray(8);
 	if (!result) return nullptr;
-	env->SetIntArrayRegion(result, 0, 7, values);
+	env->SetIntArrayRegion(result, 0, 8, values);
 	return result;
 }
 
@@ -100,6 +101,21 @@ Java_com_openbw_replays_NativeBridge_nativePan(JNIEnv*, jclass, jint dx, jint dy
 JNIEXPORT void JNICALL
 Java_com_openbw_replays_NativeBridge_nativeSetZoom(JNIEnv*, jclass, jfloat zoom) {
 	with_core([&](bwreplay::Core& core) { core.cmd_set_zoom(zoom); });
+}
+
+JNIEXPORT void JNICALL
+Java_com_openbw_replays_NativeBridge_nativeSelectAt(JNIEnv*, jclass, jint x, jint y) {
+	with_core([&](bwreplay::Core& core) { core.cmd_select_at(x, y); });
+}
+
+JNIEXPORT void JNICALL
+Java_com_openbw_replays_NativeBridge_nativeToggleFollowAt(JNIEnv*, jclass, jint x, jint y) {
+	with_core([&](bwreplay::Core& core) { core.cmd_toggle_follow_at(x, y); });
+}
+
+JNIEXPORT void JNICALL
+Java_com_openbw_replays_NativeBridge_nativeSetHudVisible(JNIEnv*, jclass, jboolean visible) {
+	with_core([&](bwreplay::Core& core) { core.cmd_set_hud_visible(visible == JNI_TRUE); });
 }
 
 JNIEXPORT void JNICALL

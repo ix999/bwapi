@@ -22,6 +22,7 @@ object NativeBridge {
         val replayLoaded: Boolean,
         val finished: Boolean,
         val zoom: Float,
+        val following: Boolean,
     ) {
         /** Playback position in 0..1, or 0 when the replay length is unknown. */
         val progress: Float
@@ -29,7 +30,7 @@ object NativeBridge {
     }
 
     fun status(): Status {
-        val v = nativeGetStatus() ?: return Status(0, 0, false, 1f, false, true, 1f)
+        val v = nativeGetStatus() ?: return Status(0, 0, false, 1f, false, true, 1f, false)
         return Status(
             currentFrame = v[0],
             endFrame = v[1],
@@ -38,6 +39,7 @@ object NativeBridge {
             replayLoaded = v[4] != 0,
             finished = v[5] != 0,
             zoom = v[6] / 1000f,
+            following = v.size > 7 && v[7] != 0,
         )
     }
 
@@ -56,6 +58,15 @@ object NativeBridge {
     fun pan(dx: Int, dy: Int) = nativePan(dx, dy)
 
     fun setZoom(zoom: Float) = nativeSetZoom(zoom)
+
+    /** Selects the unit under a screen-pixel point, or clears the selection. */
+    fun selectAt(x: Int, y: Int) = nativeSelectAt(x, y)
+
+    /** Starts or stops keeping the unit under this point centred. */
+    fun toggleFollowAt(x: Int, y: Int) = nativeToggleFollowAt(x, y)
+
+    /** openbw's own console, minimap and replay slider. */
+    fun setHudVisible(visible: Boolean) = nativeSetHudVisible(visible)
 
     /**
      * Switches to another replay without tearing the engine down, so the mpqs
@@ -82,6 +93,9 @@ object NativeBridge {
     @JvmStatic private external fun nativeSeekFrame(frame: Int)
     @JvmStatic private external fun nativePan(dx: Int, dy: Int)
     @JvmStatic private external fun nativeSetZoom(zoom: Float)
+    @JvmStatic private external fun nativeSelectAt(x: Int, y: Int)
+    @JvmStatic private external fun nativeToggleFollowAt(x: Int, y: Int)
+    @JvmStatic private external fun nativeSetHudVisible(visible: Boolean)
     @JvmStatic private external fun nativeLoadReplay(path: String)
     @JvmStatic private external fun nativeQuit()
     @JvmStatic private external fun nativeGetError(): String?

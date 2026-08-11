@@ -22,9 +22,12 @@ import java.util.Locale
  *
  * SDLActivity owns the surface and runs the engine on its own thread; this
  * subclass supplies the native libraries and the arguments SDL_main receives,
- * then lays a transport bar over the top of SDL's view. The bar is the only
- * part of the overlay that takes touches, so taps and drags anywhere else fall
- * through to the engine, which drives openbw's own minimap and unit selection.
+ * then lays its own controls over SDL's view.
+ *
+ * The app owns every interaction. A GameTouchView covers the game and turns
+ * gestures into explicit engine commands — drag pans, pinch zooms, tap selects,
+ * long press follows — so openbw itself receives no input at all and its
+ * built-in minimap, drag-select and replay slider are unreachable.
  */
 class ViewerActivity : SDLActivity() {
 
@@ -35,13 +38,22 @@ class ViewerActivity : SDLActivity() {
     private lateinit var timeLabel: TextView
     private lateinit var speedButton: Button
     private lateinit var titleLabel: TextView
+    private lateinit var touchView: GameTouchView
 
     private lateinit var replayStore: ReplayStore
 
     private var userIsSeeking = false
     private var engineHasStarted = false
+    private var appliedInitialState = false
     private var speedIndex = DEFAULT_SPEED_INDEX
     private var zoom = 2f
+
+    /**
+     * openbw's own console and minimap. Off by default: they are driven by
+     * mouse input the engine no longer receives, so they would be decoration
+     * that cannot be used.
+     */
+    private var hudVisible = false
 
     /** Name of the replay currently loaded, for the overlay title. */
     private var currentReplayName: String = ""
@@ -94,6 +106,23 @@ class ViewerActivity : SDLActivity() {
 
         titleLabel = overlay.findViewById(R.id.replay_title)
         overlay.findViewById<Button>(R.id.pick_replay).setOnClickListener { showReplayPicker() }
+
+        touchView = overlay.findViewById(R.id.touch_surface)
+        touchView.zoom = zoom
+        // Pinch changes zoom directly; mirror it so the +/- buttons continue
+        // from where the gesture left off.
+        touchView.onZoomChanged = { zoom = it }
+        touchView.onFollowToggled = {
+            val message =
+                if (NativeBridge.status().following) R.string.viewer_following
+                else R.string.viewer_follow_released
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
+
+        overlay.findViewById<Button>(R.id.toggle_hud).setOnClickListener {
+            hudVisible = !hudVisible
+            NativeBridge.setHudVisible(hudVisible)
+        }
 
         seekBar.max = SEEK_RESOLUTION
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -185,6 +214,7 @@ class ViewerActivity : SDLActivity() {
 
     private fun applyZoom(requested: Float) {
         zoom = requested.coerceIn(MIN_ZOOM, MAX_ZOOM)
+        touchView.zoom = zoom
         NativeBridge.setZoom(zoom)
     }
 
@@ -201,6 +231,11 @@ class ViewerActivity : SDLActivity() {
             }
 
             if (running) {
+                if (!appliedInitialState) {
+                    appliedInitialState = true
+                    NativeBridge.setHudVisible(hudVisible)
+                    NativeBridge.setZoom(zoom)
+                }
                 val status = NativeBridge.status()
                 playPauseButton.setImageResource(
                     if (status.paused) android.R.drawable.ic_media_play

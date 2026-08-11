@@ -60,9 +60,11 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	// openbw's UI is written against mouse events, so let SDL synthesise them
-	// from touches. That gives taps, drag-select and the minimap for free.
-	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+	// The app handles every touch itself and sends explicit commands, so the
+	// engine must not also react to input. The Android overlay already consumes
+	// the events before SDL sees them; this makes sure nothing synthesises a
+	// mouse even if one slips through.
+	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
 	SDL_Rect bounds{0, 0, 1280, 720};
 	if (SDL_GetDisplayBounds(0, &bounds) != 0 || bounds.w <= 0 || bounds.h <= 0) {

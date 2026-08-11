@@ -41,6 +41,7 @@ struct Status {
 	bool done = false;
 	bool quit_requested = false;
 	double zoom = 1.0;
+	bool following = false;
 };
 
 class Core {
@@ -79,7 +80,22 @@ public:
 	void cmd_set_speed(double multiplier);
 	void cmd_seek_frame(int frame);
 	void cmd_seek_fraction(double fraction);
+	// Screen-pixel drag. Positive dx moves the camera right, so a host wanting
+	// the map to follow the finger should negate the touch delta.
 	void cmd_pan(int dx, int dy);
+
+	// Selects whatever unit is under a screen-pixel point, or clears the
+	// selection if there is nothing there.
+	void cmd_select_at(int screen_x, int screen_y);
+
+	// Starts keeping the unit under this point centred, or stops if that same
+	// unit is already being followed. Following ends by itself when the unit
+	// dies.
+	void cmd_toggle_follow_at(int screen_x, int screen_y);
+
+	// openbw draws its own console, minimap and replay slider. They are input
+	// driven, so a host that owns all interaction itself should turn them off.
+	void cmd_set_hud_visible(bool visible);
 	// Magnification. 1.0 draws the game at native resolution; higher values
 	// enlarge it, which is what makes the view legible on a phone screen.
 	void cmd_set_zoom(double zoom);

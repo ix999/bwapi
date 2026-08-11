@@ -1,14 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Laid over SDL's surface. The root is not clickable and has no background,
-    so touches outside the transport bar fall through to the engine, which is
-    what drives openbw's own minimap, unit selection and screen dragging.
+    Laid over SDL's surface. GameTouchView consumes every touch over the game
+    and turns it into an explicit engine command, so openbw never receives
+    input and its built-in minimap, drag-select and replay slider cannot be
+    reached. All interaction belongs to the controls in this file.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:clickable="false"
     android:focusable="false">
+
+    <!--
+        Takes every touch over the game. First child, so the control bars below
+        are drawn on top and get touches before it does.
+    -->
+    <com.openbw.replays.GameTouchView
+        android:id="@+id/touch_surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
 
     <!-- Which replay is playing, and the way to change it. -->
     <LinearLayout
@@ -30,6 +40,15 @@
             android:layout_weight="1"
             android:ellipsize="middle"
             android:singleLine="true"
+            android:textColor="#FFFFFF" />
+
+        <Button
+            android:id="@+id/toggle_hud"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:minWidth="0dp"
+            android:text="@string/viewer_hud"
             android:textColor="#FFFFFF" />
 
         <Button

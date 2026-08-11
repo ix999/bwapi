@@ -80,6 +80,9 @@ enum class CmdType {
 	seek_fraction,
 	pan,
 	set_zoom,
+	select_at,
+	toggle_follow_at,
+	set_hud_visible,
 	load_replay_path,
 	quit,
 };
@@ -116,6 +119,10 @@ struct Core::Impl {
 	bool initialized = false;
 	bool replay_loaded = false;
 	double zoom = kDefaultZoom;
+
+	// Unit the camera is locked to. get_unit() returns null once it dies or its
+	// slot is recycled, which is how following ends on its own.
+	unit_id followed{};
 
 	mutable std::mutex mutex;
 	std::deque<Cmd> commands;
@@ -163,9 +170,34 @@ struct Core::Impl {
 				// so panning tracks the finger at any zoom level.
 				ui->screen_pos = ui->screen_pos + xy((int)(c.x / zoom), (int)(c.y / zoom));
 				break;
-			case CmdType::set_zoom:
+			case CmdType::set_zoom: {
+				// Keep the point under the centre of the screen fixed, so
+				// zooming does not slide the view off what you were looking at.
+				xy centre = ui->screen_pos + xy((int)ui->view_width / 2, (int)ui->view_height / 2);
 				zoom = std::max(kMinZoom, std::min(kMaxZoom, c.value));
 				apply_view_scale();
+				ui->screen_pos = centre - xy((int)ui->view_width / 2, (int)ui->view_height / 2);
+				break;
+			}
+			case CmdType::select_at: {
+				unit_t* u = ui->select_get_unit_at(screen_to_map(c.x, c.y));
+				ui->current_selection_clear();
+				if (u) ui->current_selection_add(u);
+				break;
+			}
+			case CmdType::toggle_follow_at: {
+				unit_t* u = ui->select_get_unit_at(screen_to_map(c.x, c.y));
+				if (!u) break;
+				unit_id id = ui->get_unit_id(u);
+				// A second long press on the unit already being followed
+				// releases it.
+				followed = (followed == id) ? unit_id{} : id;
+				ui->current_selection_clear();
+				ui->current_selection_add(u);
+				break;
+			}
+			case CmdType::set_hud_visible:
+				ui->draw_ui_elements = c.flag;
 				break;
 			case CmdType::load_replay_path: {
 				std::string err;
@@ -250,6 +282,25 @@ struct Core::Impl {
 			return false;
 		}
 		return do_load_replay(bytes.data(), bytes.size(), err);
+	}
+
+	// engine thread. Touch coordinates are screen pixels; the view is magnified
+	// by `zoom`, so divide before offsetting into map space.
+	xy screen_to_map(int screen_x, int screen_y) const {
+		return ui->screen_pos + xy((int)(screen_x / zoom), (int)(screen_y / zoom));
+	}
+
+	// engine thread. Keeps a followed unit centred. Returns false once the unit
+	// is gone, which releases the camera.
+	bool apply_follow() {
+		if (followed.index() == 0) return false;
+		unit_t* u = ui->get_unit(followed);
+		if (!u) {
+			followed = unit_id{};
+			return false;
+		}
+		ui->screen_pos = u->position - xy((int)ui->view_width / 2, (int)ui->view_height / 2);
+		return true;
 	}
 
 	// engine thread. ui_functions::resize() hardcodes a 1:1 view scale, so
@@ -369,6 +420,7 @@ struct Core::Impl {
 		published.done = ui ? ui->is_done() : false;
 		published.quit_requested = ui ? ui->window_closed : false;
 		published.zoom = zoom;
+		published.following = followed.index() != 0;
 	}
 };
 
@@ -437,6 +489,9 @@ bool Core::tick() {
 	try {
 		impl_->apply_commands();
 		if (impl_->replay_loaded) impl_->advance();
+		// After the simulation moves, before the frame is drawn, so a followed
+		// unit stays centred rather than lagging a frame behind.
+		impl_->apply_follow();
 		size_t was_width = impl_->ui->screen_width;
 		size_t was_height = impl_->ui->screen_height;
 		impl_->ui->update();
@@ -485,6 +540,26 @@ void Core::cmd_pan(int dx, int dy) {
 	Cmd c{CmdType::pan};
 	c.x = dx;
 	c.y = dy;
+	impl_->push(c);
+}
+
+void Core::cmd_select_at(int screen_x, int screen_y) {
+	Cmd c{CmdType::select_at};
+	c.x = screen_x;
+	c.y = screen_y;
+	impl_->push(c);
+}
+
+void Core::cmd_toggle_follow_at(int screen_x, int screen_y) {
+	Cmd c{CmdType::toggle_follow_at};
+	c.x = screen_x;
+	c.y = screen_y;
+	impl_->push(c);
+}
+
+void Core::cmd_set_hud_visible(bool visible) {
+	Cmd c{CmdType::set_hud_visible};
+	c.flag = visible;
 	impl_->push(c);
 }
 
