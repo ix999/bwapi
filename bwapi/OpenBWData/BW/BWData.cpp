@@ -2601,7 +2601,7 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
   dst->plague_timer = p->plague_timer;
   dst->maelstrom_timer = p->maelstrom_timer;
   dst->remaining_build_time = p->remaining_build_time;
-  dst->build_queue_size = (u32)p->build_queue.size();
+  dst->build_queue_size = (u8)p->build_queue.size();
   for (size_t i = 0; i != p->build_queue.size() && i != 5; ++i)
     dst->build_queue[i] = (u64)(uintptr_t)p->build_queue[i];
   const bwgame::unit_t* su = p->subunit;
@@ -2633,8 +2633,10 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
   constexpr size_t kUnion4 = kUnion3 > sizeof(bwgame::unit_t{}.ghost) ? kUnion3 : sizeof(bwgame::unit_t{}.ghost);
   constexpr size_t kWorker = sizeof(bwgame::unit_t{}.worker);
   constexpr size_t kBuilding = sizeof(bwgame::unit_t{}.building);
-  static_assert(kUnion4 + kWorker + kBuilding <= sizeof(dst->raw_blocks),
-                "MirrorFingerprint::raw_blocks too small for unit_t blocks");
+  static_assert(kUnion4 + kWorker + kBuilding == sizeof(dst->raw_blocks),
+                "MirrorFingerprint::raw_blocks must be EXACTLY the three unit_t blocks: too small "
+                "loses coverage, too large compares guaranteed-zero padding every frame per unit "
+                "per viewer (it was 320 for a 216-byte payload). Update kRawBlocks in BWData.h.");
   u8* b = dst->raw_blocks;
   std::memcpy(b, &p->vulture, kUnion4); b += kUnion4;
   std::memcpy(b, &p->worker, kWorker); b += kWorker;

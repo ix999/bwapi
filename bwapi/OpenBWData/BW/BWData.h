@@ -398,28 +398,48 @@ struct PlayerMirrorFingerprint {
 // blocks so every union-derived read is covered without per-type field logic. Trivially
 // copyable, zero-filled before fill — memcmp-comparable including padding.
 struct MirrorFingerprint {
+  // Layout is packing-ordered (8-byte fields, then 4-byte, then 1-byte) so the struct carries no
+  // interior padding: it is memcmp'd every frame for every unit in every viewer, and under
+  // dual-host that traffic is the largest single consumer of a small L2. Field ORDER here is
+  // arbitrary for correctness — only the byte image matters, and memset() zeroes any tail padding
+  // before the fill, so the comparison stays exact.
+  //
+  // kRawBlocks is the EXACT sum of the three unit_t blocks copied verbatim (union 48 + worker 64
+  // + building 104). It was 320 — a round number 104 bytes larger than anything ever written, i.e.
+  // 104 bytes per unit per viewer of guaranteed-zero padding being compared every frame. BWData.cpp
+  // static_asserts equality in BOTH directions so this cannot silently drift or bloat again.
+  enum { kRawBlocks = 216 };
+
+  u64 sprite, main_image, unit_type, order_type, sec_order_type;
+  u64 mt_unit, ot_unit, subunit, connected_unit, current_build_unit;
+  u64 sub_sprite, sub_main_image;
+  u64 build_queue[5];
+
   s32 pos_x, pos_y;
-  u64 sprite; s32 sprite_visibility;
-  u64 main_image; s32 image_anim, image_frameset;
-  u64 unit_type; s32 owner;
-  u64 order_type, sec_order_type;
+  s32 sprite_visibility, image_anim, image_frameset;
+  s32 owner;
   s32 main_order_timer, ground_cd, air_cd, spell_cd;
   s32 status_flags, carrying_flags, movement_state, movement_flags;
   u32 detected_flags;
   s32 hp_raw, shield_raw, energy_raw;
   s32 heading, vel_x, vel_y;
-  s32 mt_x, mt_y; u64 mt_unit;
-  s32 ot_x, ot_y; u64 ot_unit;
-  u64 subunit, connected_unit, current_build_unit;
+  s32 mt_x, mt_y, ot_x, ot_y;
   s32 kill_count, acid_spore_count, parasite_flags, blinded_by, storm_timer;
   s32 remove_timer, dm_timer, dm_hp_raw, stim_timer, ensnare_timer;
   s32 lockdown_timer, irradiate_timer, stasis_timer, plague_timer, maelstrom_timer;
   s32 remaining_build_time;
-  u64 build_queue[5]; u32 build_queue_size;
-  u8 sub_present; s32 sub_ground_cd, sub_air_cd;
-  u64 sub_sprite, sub_main_image; s32 sub_anim, sub_frameset;
-  u8 raw_blocks[320];
+  s32 sub_ground_cd, sub_air_cd, sub_anim, sub_frameset;
+
+  // build_queue is a fixed-capacity 5-element container, so its size fits a byte by construction —
+  // this is a TYPE-safe narrowing, not a "the value is probably small" one. The int-typed timers
+  // above are deliberately NOT narrowed: the engine declares them int, and shrinking them on the
+  // assumption that they stay small would silently miss a change and go stale.
+  u8 build_queue_size;
+  u8 sub_present;
+
+  u8 raw_blocks[kRawBlocks];
 };
+
 
 struct Unit {
   bwgame::unit_t* u = nullptr;
