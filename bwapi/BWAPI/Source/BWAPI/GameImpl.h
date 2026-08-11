@@ -284,6 +284,7 @@ namespace BWAPI
       // helper in GameInternals.cpp can bump them; they are diagnostics only.
       static long long interfaceEventWalkSkipped;
       static long long interfaceEventWalkRan;
+      static long long interfaceEventForeignSeen;
 
       UnitImpl   *getUnitFromBWUnit(BW::Unit unit);
       BulletImpl *getBulletFromBWBullet(BW::Bullet bullet);

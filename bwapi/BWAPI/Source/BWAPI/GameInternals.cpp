@@ -314,6 +314,61 @@ namespace BWAPI
 
   long long GameImpl::interfaceEventWalkSkipped = 0;
   long long GameImpl::interfaceEventWalkRan     = 0;
+  long long GameImpl::interfaceEventForeignSeen = 0;
+
+  // ---- foreign-registration audit --------------------------------------------------------
+  // The skip has exactly one blind spot, documented at length in Interface.h: a bot binary built
+  // against UPSTREAM headers inlined a registerEvent() that does not increment liveEventCount, so
+  // we would skip servicing its events forever and it would look like the bot simply did nothing.
+  // Silent wrong answers are the failure mode this project likes least, so we hunt for it.
+  //
+  // Once every kAuditPeriod frames, for each family we are actually skipping, scan for the state
+  // the counter says is impossible: a list that is non-empty while liveEventCount reads zero. On
+  // a hit we say so loudly and LATCH the skip off for that family, so the bot works correctly
+  // from then on rather than merely being diagnosed.
+  //
+  // Cost accounting, since the whole point of the skip is not to touch these objects: the audit
+  // is the same traversal, run on 1 frame in kAuditPeriod, so it returns 1/kAuditPeriod of what
+  // the skip saves. At 256 that is ~5 of the ~2,744 L2 misses/frame the cut removes -- under
+  // 0.2% of the win. In the abnormal case we fall back to the upstream walk, which is what such
+  // a bot needs anyway. The exposure is a bounded lateness, not a lost event: a foreign
+  // registration is serviced within kAuditPeriod frames instead of on the next one.
+  enum { kInterfaceEventAuditPeriod = 256 };
+
+  // Per-family latch. Never cleared: once a foreign registration has been seen in this process,
+  // assume it can recur and keep the upstream walk. Conservative in the safe direction.
+  template <typename T>
+  static bool& interfaceEventLatch()
+  {
+    static bool latched = false;
+    return latched;
+  }
+
+  template <typename T, typename Container>
+  static bool interfaceEventForeignRegistration(const Container& c, int frame, const char* family)
+  {
+    int found = 0;
+    for (auto* o : c)
+      if (!o->eventListEmpty())
+        ++found;
+    if (found == 0)
+      return false;
+
+    interfaceEventLatch<T>() = true;
+    ++GameImpl::interfaceEventForeignSeen;
+    std::printf(
+      "INTERFACEEVENTS FOREIGN-REGISTRATION f=%d family=%s objects=%d\n"
+      "  %d %s object(s) hold registered events that the live-event counter never saw. The AI\n"
+      "  module was almost certainly built against UPSTREAM BWAPI headers, whose registerEvent()\n"
+      "  does not participate in the counting this engine's walk-skip relies on\n"
+      "  (docs/design/ENGINE_OPT_INTERFACE_EVENTS.md).\n"
+      "  The skip is now LATCHED OFF for this family, so these events ARE being serviced from\n"
+      "  here on -- but up to %d frames later than upstream would have serviced them. Rebuild the\n"
+      "  bot against these headers, or run with SB_INTERFACE_EVENT_SKIP=0, to remove that delay.\n",
+      frame, family, found, found, family, (int)kInterfaceEventAuditPeriod);
+    std::fflush(stdout);
+    return true;
+  }
 
   // Skip predicate for one interface family. T::anyInterfaceEvents() counts live
   // InterfaceEvent<T> objects across every instance of T; zero means every list is empty, so
@@ -325,12 +380,18 @@ namespace BWAPI
   // miscounted event surfaces as a loud INTERFACE-EVENT-VERIFY-DIFF instead of as a silently
   // dropped callback. The counter is allowed to drift high, so a false "must walk" is
   // expected and harmless; a false "may skip" is the bug this hunts.
-  template <typename T>
-  static bool interfaceEventWalkNeeded()
+  template <typename T, typename Container>
+  static bool interfaceEventWalkNeeded(const Container& c, int frame, const char* family)
   {
     if (!interfaceEventSkipEnabled() || interfaceEventVerifyMode())
       return true;
-    if (T::anyInterfaceEvents())
+    if (interfaceEventLatch<T>() || T::anyInterfaceEvents())
+    {
+      ++GameImpl::interfaceEventWalkRan;
+      return true;
+    }
+    if (frame % (int)kInterfaceEventAuditPeriod == 0 &&
+        interfaceEventForeignRegistration<T>(c, frame, family))
     {
       ++GameImpl::interfaceEventWalkRan;
       return true;
@@ -344,8 +405,10 @@ namespace BWAPI
     // GameImpl events
     this->updateEvents();
 
+    const int ieFrame = this->getFrameCount();
+
     // UnitImpl events
-    if (interfaceEventWalkNeeded<UnitInterface>())
+    if (interfaceEventWalkNeeded<UnitInterface>(this->accessibleUnits, ieFrame, "Unit"))
     {
       for(Unit u : this->accessibleUnits)
       {
@@ -357,14 +420,14 @@ namespace BWAPI
     }
 
     // ForceImpl events
-    if (interfaceEventWalkNeeded<ForceInterface>())
+    if (interfaceEventWalkNeeded<ForceInterface>(this->forces, ieFrame, "Force"))
     {
       for (Force f : this->forces)
         f->updateEvents();
     }
 
     // BulletImpl events
-    if (interfaceEventWalkNeeded<BulletInterface>())
+    if (interfaceEventWalkNeeded<BulletInterface>(this->bullets, ieFrame, "Bullet"))
     {
       for (Bullet b : this->bullets)
       {
@@ -373,14 +436,14 @@ namespace BWAPI
     }
 
     // RegionImpl events
-    if (interfaceEventWalkNeeded<RegionInterface>())
+    if (interfaceEventWalkNeeded<RegionInterface>(this->regionsList, ieFrame, "Region"))
     {
       for (Region r : this->regionsList)
         r->updateEvents();
     }
 
     // PlayerImpl events
-    if (interfaceEventWalkNeeded<PlayerInterface>())
+    if (interfaceEventWalkNeeded<PlayerInterface>(this->playerSet, ieFrame, "Player"))
     {
       for (Player p : this->playerSet)
         p->updateEvents();

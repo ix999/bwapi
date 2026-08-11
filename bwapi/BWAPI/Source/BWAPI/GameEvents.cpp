@@ -423,9 +423,9 @@ namespace BWAPI
     if (interfaceEventWalkSkipped + interfaceEventWalkRan > 0)
     {
       const long long total = interfaceEventWalkSkipped + interfaceEventWalkRan;
-      std::printf("INTERFACEEVENTS skipped=%lld walked=%lld rate=%.1f%%\n",
+      std::printf("INTERFACEEVENTS skipped=%lld walked=%lld rate=%.1f%% foreign=%lld\n",
                   interfaceEventWalkSkipped, interfaceEventWalkRan,
-                  100.0 * interfaceEventWalkSkipped / total);
+                  100.0 * interfaceEventWalkSkipped / total, interfaceEventForeignSeen);
       interfaceEventWalkSkipped = 0;
       interfaceEventWalkRan     = 0;
     }

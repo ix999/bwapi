@@ -83,11 +83,6 @@ namespace BWAPI
       interfaceEvents.clear();
     };
 
-    // For SB_INTERFACE_EVENT_SKIP=verify: the invariant the skip rests on.
-    bool eventListEmpty() const
-    {
-      return interfaceEvents.empty();
-    };
     /// @endcond
   public:
     /// @cond HIDDEN
@@ -96,6 +91,15 @@ namespace BWAPI
     static bool anyInterfaceEvents()
     {
       return liveEventCount != 0;
+    };
+
+    // The invariant the skip rests on, queryable per object. Used by SB_INTERFACE_EVENT_SKIP=
+    // verify and by the periodic foreign-registration audit in GameInternals.cpp -- the audit is
+    // a free template and cannot reach protected members, which is the only reason this is here
+    // rather than beside interfaceEvents. Additive: no existing declaration changes.
+    bool eventListEmpty() const
+    {
+      return interfaceEvents.empty();
     };
     /// @endcond
     /// <summary>Retrieves a pointer or value at an index that was stored for this interface using
