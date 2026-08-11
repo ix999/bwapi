@@ -286,6 +286,11 @@ namespace BWAPI
       static long long interfaceEventWalkRan;
       static long long interfaceEventForeignSeen;
 
+      // Unit-mirror verify instrument (SB_MIRROR_SKIP=verify): how many outputs were
+      // actually compared. Without it a verify run that never entered the branch is
+      // indistinguishable from one that entered it and found nothing.
+      static long long mirrorVerifyCompared;
+
       UnitImpl   *getUnitFromBWUnit(BW::Unit unit);
       BulletImpl *getBulletFromBWBullet(BW::Bullet bullet);
       BulletImpl *getBulletFromIndex(int index);

@@ -150,7 +150,9 @@ namespace BWAPI
           if (mirrorVerifyMode())
           {
             mirrorVerify = true;
-            mirrorVerifySnap = *self;
+            if (!mirrorVerifySnap)
+              mirrorVerifySnap.reset(new UnitData());
+            *mirrorVerifySnap = *self;
           }
           else
           {
@@ -820,10 +822,11 @@ namespace BWAPI
     if ( self->secondaryOrder >= 0 && self->secondaryOrder < Orders::Enum::MAX )
       self->secondaryOrder = BWtoBWAPI_Order[self->secondaryOrder];
 
-    if (mirrorVerify)
+    if (mirrorVerify && mirrorVerifySnap)
     {
       mirrorVerify = false;
-      const unsigned char* a = reinterpret_cast<const unsigned char*>(&mirrorVerifySnap);
+      ++GameImpl::mirrorVerifyCompared;
+      const unsigned char* a = reinterpret_cast<const unsigned char*>(mirrorVerifySnap.get());
       const unsigned char* b = reinterpret_cast<const unsigned char*>(self);
       for (size_t i = 0; i != sizeof(UnitData); ++i)
         if (a[i] != b[i])

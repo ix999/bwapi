@@ -430,6 +430,14 @@ namespace BWAPI
       interfaceEventWalkRan     = 0;
     }
 
+    // Unit-mirror verify instrument. Silent unless SB_MIRROR_SKIP=verify actually compared
+    // something, so a verify run's log distinguishes "clean" from "never armed".
+    if (mirrorVerifyCompared > 0)
+    {
+      std::printf("MIRRORVERIFY compared=%lld\n", mirrorVerifyCompared);
+      mirrorVerifyCompared = 0;
+    }
+
     // player-specific game end
     for (int i = 0; i < BW::PLAYER_COUNT; ++i)
       if ( this->players[i] )

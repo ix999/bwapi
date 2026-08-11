@@ -315,6 +315,7 @@ namespace BWAPI
   long long GameImpl::interfaceEventWalkSkipped = 0;
   long long GameImpl::interfaceEventWalkRan     = 0;
   long long GameImpl::interfaceEventForeignSeen = 0;
+  long long GameImpl::mirrorVerifyCompared      = 0;
 
   // ---- foreign-registration audit --------------------------------------------------------
   // The skip has exactly one blind spot, documented at length in Interface.h: a bot binary built

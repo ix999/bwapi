@@ -4,6 +4,8 @@
 #include <BWAPI/Unitset.h>
 #include <Util/Types.h>
 
+#include <memory>
+
 #include <BWAPI/UnitCommand.h>
 #include <BWAPI/Client/UnitData.h>
 
@@ -318,7 +320,12 @@ namespace BWAPI
       u8 mirrorStreak = 0;
       bool mirrorSkip = false;
       bool mirrorVerify = false;
-      UnitData mirrorVerifySnap{};
+      // Verify mode's stale-output snapshot. Held BEHIND A POINTER and allocated on first
+      // use, because SB_MIRROR_SKIP=verify is a dev instrument while this object is walked
+      // once per live unit per frame in every production run: inline, its 328 B were 21% of
+      // UnitImpl and pushed the fields the walk does read onto further cache lines. Null
+      // whenever verify mode is off, which is always except under the instrument.
+      std::unique_ptr<UnitData> mirrorVerifySnap;
       bool mirrorSkipEligible(BW::Unit& o) const;
       static bool mirrorVerifyMode();
 
