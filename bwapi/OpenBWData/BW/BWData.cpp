@@ -560,6 +560,12 @@ struct game_setup_helper_t {
     // N+latency, so a different value is a different game.
     sync_funcs.sync_st.latency = 3;
 
+    // Name the local viewer "p1" to pair with the secondary "p2" below: otherwise the local
+    // viewer records no name and the replay header / in-game browser show it as "?". Cosmetic
+    // only -- a client NAME feeds neither the uid (seed material is (seed, client index)) nor the
+    // simulation, so the game stays byte-identical (gated by the seed-906 digest).
+    sync_funcs.sync_st.local_client->name = "p1";
+
     secondary_client = sync_funcs.add_local_secondary_client("p2", 2);
 
     bwgame::game_load_functions load_funcs(st);
