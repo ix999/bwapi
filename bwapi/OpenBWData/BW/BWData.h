@@ -377,8 +377,14 @@ struct PlayerMirrorFingerprint {
   u8  tech_available[kTechTypes];
   u8  tech_in_progress[kTechTypes];
   u8  unit_available[kUnitTypes];
-  s32 units_dead[kUnitTypes];
-  s32 units_killed[kUnitTypes];
+  // unitCountsDead/Killed are `return 0` in this engine (BWData.cpp, marked fixme) and are
+  // index-independent, so one probe each covers the whole array. Keeping the full 228-entry
+  // arrays cost 1,816 B per player of fingerprint that is always zero — 42 KB of per-frame
+  // memcmp traffic across 12 players x 2 viewers under dual-host, where L2 is the binding
+  // constraint. If they are ever implemented per type, SB_PLAYER_MIRROR_SKIP=verify reports it
+  // immediately as a deadUnitCount/killedUnitCount diff.
+  s32 units_dead_probe;
+  s32 units_killed_probe;
   s32 all_units_lost, all_buildings_lost, all_factories_lost;
   s32 all_units_killed, all_buildings_razed, all_factories_razed;
   s32 unit_score, kill_score, building_score, razing_score, custom_score;

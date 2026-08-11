@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstddef>
 #include <Util/Convenience.h>
 
 #include <BW/BWData.h>
@@ -149,6 +150,28 @@ namespace BWAPI
     return verify;
   }
 
+  // Compare only the PlayerData that updateData() can produce or consume. allUnitCount and
+  // visibleUnitCount are maintained elsewhere in BWAPI and are neither read nor written here,
+  // so including them made the guard sensitive to changes it does not care about AND cost
+  // 1,872 B per player per frame of pointless comparison — 45 KB across 12 players x 2 viewers
+  // under dual-host, where L2 capacity is the binding constraint. completedUnitCount IS read
+  // (the hidden-player branch) and stays covered: the two ranges below straddle exactly the
+  // two excluded arrays. Verify mode still byte-compares the WHOLE struct, so a mistake here
+  // surfaces as a PLAYER-MIRROR-VERIFY-DIFF rather than as silent staleness.
+  static bool playerDataOutputsUnchanged(const PlayerData* a, const PlayerData* b)
+  {
+    static_assert(offsetof(PlayerData, visibleUnitCount) > offsetof(PlayerData, allUnitCount),
+                  "allUnitCount/visibleUnitCount must be adjacent for the skipped range");
+    static_assert(offsetof(PlayerData, completedUnitCount) > offsetof(PlayerData, visibleUnitCount),
+                  "completedUnitCount must follow the skipped range");
+    const char* pa = reinterpret_cast<const char*>(a);
+    const char* pb = reinterpret_cast<const char*>(b);
+    constexpr std::size_t head = offsetof(PlayerData, allUnitCount);
+    constexpr std::size_t tail = offsetof(PlayerData, completedUnitCount);
+    return std::memcmp(pa, pb, head) == 0 &&
+           std::memcmp(pa + tail, pb + tail, sizeof(PlayerData) - tail) == 0;
+  }
+
   // Skip-rate telemetry: a guard that never fires must be visible rather than inferred
   // from a flat wall-clock number. Printed once per game from onGameEnd.
   long long PlayerImpl::mirrorSkipCount = 0;
@@ -200,7 +223,7 @@ namespace BWAPI
       if (mirrorSnapValid &&
           std::memcmp(&now,   &mirrorSnap,      sizeof(now))        == 0 &&
           std::memcmp(&extra, &mirrorExtraSnap, sizeof(extra))      == 0 &&
-          std::memcmp(self,   &mirrorOutSnap,   sizeof(PlayerData)) == 0)
+          playerDataOutputsUnchanged(self, &mirrorOutSnap))
       {
         // Skip only from the SECOND consecutive unchanged frame, matching the unit-side
         // rule: one full recompute must have run against exactly these inputs before its

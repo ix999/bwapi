@@ -2167,8 +2167,8 @@ void Player::mirrorFingerprint(PlayerMirrorFingerprint* dst, bool needCapabiliti
   // frame disappear. If they are ever implemented per type, SB_PLAYER_MIRROR_SKIP=verify
   // reports it immediately as a deadUnitCount/killedUnitCount diff; that gate is the reason
   // this shortcut is allowed rather than guessed at.
-  dst->units_dead[0]   = unitCountsDead(0);
-  dst->units_killed[0] = unitCountsKilled(0);
+  dst->units_dead_probe   = unitCountsDead(0);
+  dst->units_killed_probe = unitCountsKilled(0);
 
   dst->all_units_lost      = allUnitsLost();
   dst->all_buildings_lost  = allBuildingsLost();
