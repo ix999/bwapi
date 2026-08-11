@@ -197,6 +197,9 @@ unreachable. Only the app's own controls take touches of their own.
 | Tap | Selects the unit underneath |
 | Long press | Follows that unit; again on the same unit releases it |
 
+Dragging also releases a followed unit: otherwise the camera would snap back
+every frame and the drag would feel broken.
+
 Following resolves the unit through `get_unit()` every frame, which returns
 null once it dies or its slot is recycled — so the camera releases itself
 rather than tracking a corpse or jumping to whatever reused the slot.

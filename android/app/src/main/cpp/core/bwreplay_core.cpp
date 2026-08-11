@@ -167,6 +167,9 @@ struct Core::Impl {
 				ui->replay_frame = clamp_frame((int)(ui->replay_st.end_frame * c.value));
 				break;
 			case CmdType::pan:
+				// Dragging releases a followed unit. Otherwise the camera would
+				// snap back to it every frame and the drag would feel dead.
+				followed = unit_id{};
 				// Drag distances arrive in screen pixels; convert to map pixels
 				// so panning tracks the finger at any zoom level.
 				ui->screen_pos = ui->screen_pos + xy((int)(c.x / zoom), (int)(c.y / zoom));
