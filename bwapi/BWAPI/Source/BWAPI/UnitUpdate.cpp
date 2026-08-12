@@ -82,6 +82,31 @@ namespace BWAPI
     return reloc;
   }
 
+  bool UnitImpl::mirrorPrefetchEnabled()
+  {
+    static const bool pf = [] {
+      const char* v = std::getenv("SBBOT_MIRROR_PREFETCH");
+      return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    return pf;
+  }
+
+  int UnitImpl::mirrorPrefetchHint()
+  {
+    // __builtin_prefetch locality arg: 3=T0 (all caches), 2=T1, 1=T2, 0=NTA (non-temporal).
+    static const int hint = [] {
+      const char* v = std::getenv("SBBOT_MIRROR_PREFETCH_HINT");
+      if (v) {
+        if (!std::strcmp(v, "nta")) return 0;
+        if (!std::strcmp(v, "t2"))  return 1;
+        if (!std::strcmp(v, "t1"))  return 2;
+        if (!std::strcmp(v, "t0"))  return 3;
+      }
+      return 3;  // T0 default
+    }();
+    return hint;
+  }
+
   bool UnitImpl::mirrorSkipEligible(BW::Unit& o) const
   {
     GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
@@ -165,6 +190,19 @@ namespace BWAPI
     return static_cast<unsigned>(typeId) < static_cast<unsigned>(UnitTypes::Enum::MAX) ? table[typeId] : 0;
   }
 
+  // __builtin_prefetch requires a compile-time-constant locality arg, so dispatch the runtime
+  // (cached) hint tier through a switch. Read prefetch, all four tiers T0/T1/T2/NTA.
+  static inline void mirrorPrefetchRead(const void* p, int hint)
+  {
+    switch (hint)
+    {
+    case 0:  __builtin_prefetch(p, 0, 0); break;
+    case 1:  __builtin_prefetch(p, 0, 1); break;
+    case 2:  __builtin_prefetch(p, 0, 2); break;
+    default: __builtin_prefetch(p, 0, 3); break;
+    }
+  }
+
   void UnitImpl::updateInternalData()
   {
     GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
@@ -194,14 +232,21 @@ namespace BWAPI
     }
     if (isAlive && mirrorSkipEligible(o))
     {
+      // SNAP_RELOC on: read/write the relocated contiguous snapshot (streams under the SEQ
+      // index-order pass); off: the embedded member (baseline). Same bytes either way -> byte-exact.
+      BW::MirrorFingerprint& snap = mirrorSnapRelocEnabled() ? game.unitMirrorSnap[getIndex()] : mirrorSnap;
+      // Software prefetch (latency lever, SBBOT_MIRROR_PREFETCH): `snap` is the memcmp's cold
+      // second operand. Issue its load now so it streams in while the fingerprint build below
+      // stalls on scattered unit_t reads -> warm by the compare. __builtin_prefetch is a pure
+      // droppable hint (writes no register/flag/memory, faults on nothing), so the mirror output
+      // is byte-identical on/off; the kill-switch (=0) keeps it out of the hot path.
+      if (mirrorPrefetchEnabled())
+        mirrorPrefetchRead(&snap, mirrorPrefetchHint());
       BW::MirrorFingerprint now;
       // Path 2 type-partition: which type-blocks a unit reads is a pure function of its type, so
       // the selection is one table read (mirrorBlockTagForType) instead of per-unit guard
       // evaluation -- keeping the byte-shrink while removing the per-unit predicate cost.
       o.mirrorFingerprint(&now, mirrorBlockTagForType(o.unitType()));
-      // SNAP_RELOC on: read/write the relocated contiguous snapshot (streams under the SEQ
-      // index-order pass); off: the embedded member (baseline). Same bytes either way -> byte-exact.
-      BW::MirrorFingerprint& snap = mirrorSnapRelocEnabled() ? game.unitMirrorSnap[getIndex()] : mirrorSnap;
       // Variable-length compare: the fixed head (through block_tag/payload_len) plus only the
       // packed blocks this unit carries. block_tag/payload_len live in the head, so a change in
       // WHICH blocks are present blocks the skip; an army unit carries none (payload_len 0), so

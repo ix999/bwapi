@@ -335,6 +335,12 @@ namespace BWAPI
       // can be A/B'd on its own; it only pays combined with SEQ=1 (the index-order pass streams the
       // relocated cold operand). Default off -> embedded member -> byte-identical to baseline.
       static bool mirrorSnapRelocEnabled();
+      // SBBOT_MIRROR_PREFETCH (read once): software-prefetch the memcmp's cold operand (this unit's
+      // snapshot) at the top of the skip check, overlapping the fetch with the fingerprint build.
+      // Pure droppable hint -> byte-identical on/off. Latency lever for a latency-bound box (the
+      // dev Xeon); inert (kill-switch) at 0. Hint tier via SBBOT_MIRROR_PREFETCH_HINT (t0|t1|t2|nta).
+      static bool mirrorPrefetchEnabled();
+      static int  mirrorPrefetchHint();
 
       Unitset connectedUnits;
       Unitset loadedUnits;
