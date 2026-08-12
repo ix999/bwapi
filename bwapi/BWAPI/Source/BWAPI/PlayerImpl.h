@@ -194,6 +194,14 @@ namespace BWAPI
       static bool playerMirrorSkipEnabled();
       static bool playerMirrorVerifyMode();
 
+      // Dormant-slot extension to the per-type count tables (ENGINE_REVIEW_2026-08-12 §2.2):
+      // an empty engine slot (nType None, settled) can never own a unit — no discover, no
+      // renegade — so allUnitCount/visibleUnitCount/completedUnitCount are permanently zero
+      // and computeSecondaryUnitSets' per-frame MemZero of them (~2.8 KB x 3 arrays) is pure
+      // working-set churn. Honours the same kill-switch and verify semantics as the player
+      // mirror skip: with SB_PLAYER_MIRROR_SKIP=0 or =verify every slot is zeroed again.
+      bool countTablesDormant();
+
 #ifdef COMPAT
       CompatPlayerImpl compatPlayerImpl{this};
 #endif

@@ -347,6 +347,12 @@ namespace BWAPI
 
     for(PlayerImpl* p : players)
     {
+      // Dormant slots (ENGINE_REVIEW_2026-08-12 §2.2, same key as the aabc0b0a player-mirror
+      // skip): an empty engine slot never owns a unit, so its tables are permanently zero and
+      // re-zeroing them just drags ~8.4 KB per slot back through the cache every frame. The
+      // counting loops below only ever touch owners of live units, so a skipped slot's tables
+      // cannot be written this frame either. SB_PLAYER_MIRROR_SKIP=0/verify disables the skip.
+      if (p->countTablesDormant()) continue;
       PlayerData *pd = p->self;
       MemZero(pd->allUnitCount);
       MemZero(pd->visibleUnitCount);

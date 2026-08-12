@@ -172,6 +172,14 @@ namespace BWAPI
            std::memcmp(pa + tail, pb + tail, sizeof(PlayerData) - tail) == 0;
   }
 
+  bool PlayerImpl::countTablesDormant()
+  {
+    if (!playerMirrorSkipEnabled() || playerMirrorVerifyMode()) return false;
+    if (index >= BW::PLAYER_COUNT) return false;
+    const int none = (int)PlayerTypes::Enum::None;
+    return bwplayer.nType() == none && mirrorDormantType == none;
+  }
+
   // Skip-rate telemetry: a guard that never fires must be visible rather than inferred
   // from a flat wall-clock number. Printed once per game from onGameEnd.
   long long PlayerImpl::mirrorSkipCount = 0;
