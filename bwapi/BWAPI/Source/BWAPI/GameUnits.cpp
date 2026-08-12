@@ -5,6 +5,11 @@
 #include <BWAPI/PlayerImpl.h>
 #include <BWAPI/Order.h>
 #include <cassert>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+#include <utility>
+#include <algorithm>
 
 #include "../../../Debug.h"
 
@@ -68,6 +73,20 @@ namespace BWAPI
   //------------------------------------------ Compute Unit Existence ----------------------------------------
   void GameImpl::computeUnitExistence()
   {
+    // sb-perf: SBBOT_MIRROR_SEQ=1 defers the per-unit fingerprint build (updateInternalData) out of
+    // the engine-node-list pointer-chase below into an engine-INDEX-order pass at the end of this
+    // function, so its ~15-cache-line scattered unit_t reads stream (piecewise-contiguous
+    // object_container) for the HW prefetcher. Read once; default off (kill-switch, rule 14).
+    static const bool seqMirror = [] {
+      const char* v = std::getenv("SBBOT_MIRROR_SEQ");
+      return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    // Alive units collected (index, ptr) during the three node-list walks below, so the sequential
+    // pass touches only the ~n alive units in engine-INDEX order -- never the ~1700 dead unitArray
+    // slots. thread_local: per dual-host viewer; capacity is reused frame-to-frame.
+    static thread_local std::vector<std::pair<int, UnitImpl*>> seqScratch;
+    if (seqMirror) seqScratch.clear();
+
     for(Unit ui : aliveUnits) //all alive units are dying until proven alive
     {
       UnitImpl *u = static_cast<UnitImpl*>(ui);
@@ -99,7 +118,8 @@ namespace BWAPI
       {
         u->isAlive = true;
         aliveUnits.insert(u);
-        u->updateInternalData();
+        if (seqMirror) seqScratch.emplace_back((int)u->getIndex(), u);  // u warm from isUnitAlive
+        else           u->updateInternalData();
       }
     }
     for ( auto i = bwgame.UnitNodeList_HiddenUnit_begin(), e = bwgame.UnitNodeList_HiddenUnit_end(); i != e; ++i )
@@ -109,7 +129,8 @@ namespace BWAPI
       {
         u->isAlive = true;
         aliveUnits.insert(u);
-        u->updateInternalData();
+        if (seqMirror) seqScratch.emplace_back((int)u->getIndex(), u);  // u warm from isUnitAlive
+        else           u->updateInternalData();
       }
     }
     for ( auto i = bwgame.UnitNodeList_ScannerSweep_begin(), e = bwgame.UnitNodeList_ScannerSweep_end(); i != e; ++i )
@@ -119,7 +140,8 @@ namespace BWAPI
       {
         u->isAlive = true;
         aliveUnits.insert(u);
-        u->updateInternalData();
+        if (seqMirror) seqScratch.emplace_back((int)u->getIndex(), u);  // u warm from isUnitAlive
+        else           u->updateInternalData();
       }
     }
     
@@ -140,7 +162,22 @@ namespace BWAPI
         it++;
       }
     }
-    
+
+    // sb-perf mirror sequential pass (SBBOT_MIRROR_SEQ): build every alive unit's fingerprint in
+    // engine-INDEX order rather than node-list order, so its scattered unit_t reads stream in
+    // storage order (piecewise-contiguous object_container) for the HW prefetcher. Same SET as the
+    // three loops above, and updateInternalData is order-independent (own mirror out; frame-constant
+    // engine state in; no ID assignment; no other unit's mirror) -- so byte-exact. aliveUnits
+    // insertion order and lazy ID assignment (extractUnitData) are untouched. Sort by index only
+    // (unique) -- no pointer comparison, so no ASLR-order dependence.
+    if (seqMirror)
+    {
+      std::sort(seqScratch.begin(), seqScratch.end(),
+                [](const std::pair<int, UnitImpl*>& a, const std::pair<int, UnitImpl*>& b)
+                { return a.first < b.first; });
+      for (const auto& pr : seqScratch)
+        pr.second->updateInternalData();
+    }
   }
   //------------------------------------------ Compute Client Sets -------------------------------------------
   void GameImpl::computePrimaryUnitSets()
