@@ -71,6 +71,15 @@ namespace BWAPI
     return seq;
   }
 
+  bool UnitImpl::mirrorSnapRelocEnabled()
+  {
+    static const bool reloc = [] {
+      const char* v = std::getenv("SBBOT_MIRROR_SNAP_RELOC");
+      return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    return reloc;
+  }
+
   bool UnitImpl::mirrorSkipEligible(BW::Unit& o) const
   {
     GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
@@ -150,9 +159,9 @@ namespace BWAPI
     {
       BW::MirrorFingerprint now;
       o.mirrorFingerprint(&now);
-      // SEQ on: read/write the relocated contiguous snapshot (streams under the index-order pass);
-      // SEQ off: the embedded member (baseline). Same bytes either way -> byte-exact.
-      BW::MirrorFingerprint& snap = mirrorSeqEnabled() ? game.unitMirrorSnap[getIndex()] : mirrorSnap;
+      // SNAP_RELOC on: read/write the relocated contiguous snapshot (streams under the SEQ
+      // index-order pass); off: the embedded member (baseline). Same bytes either way -> byte-exact.
+      BW::MirrorFingerprint& snap = mirrorSnapRelocEnabled() ? game.unitMirrorSnap[getIndex()] : mirrorSnap;
       if (mirrorSnapValid && std::memcmp(&now, &snap, sizeof(now)) == 0)
       {
         if (mirrorStreak >= 1)
