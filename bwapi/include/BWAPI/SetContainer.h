@@ -1,10 +1,17 @@
 #pragma once
 #include <unordered_set>
+#include <functional>
+#include "MirrorPoolAllocator.h"
 
 namespace BWAPI
 {
+  // The set nodes + bucket arrays come from a thread-local recycling pool (MirrorPoolAllocator)
+  // rather than malloc, which removes the per-frame allocator churn that dominates this
+  // memory-latency-bound engine. Byte-exact (order depends on hash/buckets, not addresses);
+  // kill-switch SBBOT_MIRROR_POOL=0 falls back to the system allocator. See MirrorPoolAllocator.h.
   template <class T, class HashT>
-  using SetContainerUnderlyingT = std::unordered_set < T, HashT >;
+  using SetContainerUnderlyingT =
+      std::unordered_set < T, HashT, std::equal_to<T>, MirrorPoolAllocator<T> >;
 
   /// <summary>This container is used to wrap convenience functions for BWAPI and be used as a
   /// bridge with a built-in set type.</summary>
