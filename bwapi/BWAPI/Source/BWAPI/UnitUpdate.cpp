@@ -276,7 +276,10 @@ namespace BWAPI
       }
       else
       {
-        snap = now;
+        // Persist only the live prefix (head + this unit's payload). now's tail past fpCmpLen is
+        // deliberately left unwritten by the head-only memset above, and is never compared, so a
+        // full-struct copy would read indeterminate bytes for nothing.
+        std::memcpy(&snap, &now, fpCmpLen);
         mirrorSnapValid = true;
         mirrorStreak = 0;
       }

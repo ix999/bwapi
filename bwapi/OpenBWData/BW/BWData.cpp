@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <random>
 #include <functional>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <condition_variable>
@@ -2571,7 +2572,12 @@ inline s8 fp_s8(int v, const char* f) {
 
 void Unit::mirrorFingerprint(MirrorFingerprint* dst, u8 blockTag) const
 {
-  std::memset(dst, 0, sizeof(*dst));
+  // Zero only the compared HEAD (through block_tag/payload_len). Its conditionally-assigned
+  // fields (sprite_visibility, the sub* set, ...) need a deterministic base, but the raw_blocks
+  // payload is memcpy-filled for exactly the blocks this unit carries, and the tail past
+  // payload_len is never read -- the caller's memcmp and snap copy both stop at
+  // offsetof(raw_blocks)+payload_len. Saves zeroing up to 160 B per unit per frame.
+  std::memset(dst, 0, offsetof(MirrorFingerprint, raw_blocks));
   const bwgame::unit_t* p = u;
   dst->pos_x = fp_u16(p->position.x, "pos_x");
   dst->pos_y = fp_u16(p->position.y, "pos_y");
