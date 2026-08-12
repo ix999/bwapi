@@ -2569,7 +2569,7 @@ inline s8 fp_s8(int v, const char* f) {
 }
 }
 
-void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
+void Unit::mirrorFingerprint(MirrorFingerprint* dst, u8 blockTag) const
 {
   std::memset(dst, 0, sizeof(*dst));
   const bwgame::unit_t* p = u;
@@ -2654,12 +2654,18 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
       }
     }
   }
-  // Raw copies of the type-specific blocks: every union/building-derived read (resource
-  // counts, gather queue, addon/rally/silo/nydus links, fighter parent, mine counts, hangar
-  // counts) is covered verbatim without per-type logic. The worker block contributes only its
-  // powerup pointer: worker.powerup is the ONLY worker-block field the mirror boundary reads
-  // (Unit::getPowerUp), so copying the other 56 bytes would compare state no recompute
-  // consumes. powerup sits first in the worker struct, so &worker.powerup == &worker.
+  // Type-partition (Path 2): carry only the type-blocks THIS unit's type reads, packed front in
+  // fixed order (union, powerup, building). blockTag is a precomputed pure function of unit type
+  // (caller-side table, UnitUpdate.cpp mirrorBlockTagForType) -- the whole selection depends only
+  // on type, so the per-unit predicate cost collapses to one table read. Its bits are the EXACT
+  // read guards: union = the bwgame unit_is_fighter/carrier/reaver/vulture sets that gate
+  // fighter.parent/is_outside, carrier/reaver hangar counts, vulture.spider_mine_count; powerup =
+  // the worker set (ut_worker) that gates worker.powerup; building = isBuilding ||
+  // isResourceContainer || canProduce (a superset that also covers the _getType morph remap, which
+  // only fires when the raw type isBuilding). A block absent from blockTag is one whose reads
+  // cannot fire for this unit, so omitting it can never stale the mirror. block_tag + payload_len
+  // (both in the compared head) record the selection, so a type/order change -- which also moves
+  // unit_type/order_type -- flips the tag and forces a recompute.
   constexpr size_t kUnion = sizeof(bwgame::unit_t{}.vulture) > sizeof(bwgame::unit_t{}.carrier)
                               ? sizeof(bwgame::unit_t{}.vulture) : sizeof(bwgame::unit_t{}.carrier);
   constexpr size_t kUnion2 = kUnion > sizeof(bwgame::unit_t{}.fighter) ? kUnion : sizeof(bwgame::unit_t{}.fighter);
@@ -2668,13 +2674,23 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
   constexpr size_t kPowerup = sizeof(bwgame::unit_t{}.worker.powerup);
   constexpr size_t kBuilding = sizeof(bwgame::unit_t{}.building);
   static_assert(kUnion4 + kPowerup + kBuilding == sizeof(dst->raw_blocks),
-                "MirrorFingerprint::raw_blocks must be EXACTLY union + worker.powerup + building: "
-                "too small loses coverage, too large compares guaranteed-zero padding every frame "
-                "per unit per viewer. Update kRawBlocks in BWData.h.");
+                "raw_blocks CAPACITY must equal union + worker.powerup + building (the all-blocks "
+                "payload). Update kRawBlocks in BWData.h.");
   u8* b = dst->raw_blocks;
-  std::memcpy(b, &p->vulture, kUnion4); b += kUnion4;
-  std::memcpy(b, &p->worker.powerup, kPowerup); b += kPowerup;
-  std::memcpy(b, &p->building, kBuilding);
+  if (blockTag & MirrorFingerprint::kBlkUnion)
+  {
+    std::memcpy(b, &p->vulture, kUnion4); b += kUnion4;
+  }
+  if (blockTag & MirrorFingerprint::kBlkPowerup)
+  {
+    std::memcpy(b, &p->worker.powerup, kPowerup); b += kPowerup;
+  }
+  if (blockTag & MirrorFingerprint::kBlkBuilding)
+  {
+    std::memcpy(b, &p->building, kBuilding); b += kBuilding;
+  }
+  dst->block_tag = blockTag;
+  dst->payload_len = (u8)(b - dst->raw_blocks);
 }
 
 int Unit::resourceType() const

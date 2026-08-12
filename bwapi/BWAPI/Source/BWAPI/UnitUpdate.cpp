@@ -1,6 +1,8 @@
 #include "UnitImpl.h"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -128,6 +130,41 @@ namespace BWAPI
     return true;
   }
 
+  // Path 2 type-partition table: which fingerprint type-blocks a unit reads is a pure function of
+  // its unit type, so precompute the selection once (thread-safe magic static) and read one byte
+  // per unit instead of re-evaluating guards. The bits are the EXACT read guards:
+  //   union    = the bwgame unit_is_fighter/carrier/reaver/vulture sets (BWData.cpp): Interceptor,
+  //              Scarab, Carrier, Hero_Gantrithor, Reaver, Hero_Warbringer, Vulture,
+  //              Hero_Jim_Raynor_Vulture (hero variants never occur in melee, matched for exactness),
+  //   powerup  = the worker set (ut_worker): SCV, Drone, Probe,
+  //   building = isBuilding || isResourceContainer || canProduce -- a superset of the building
+  //              read guards (addon/rally/silo/nydus/resource/research/upgrade) that also covers the
+  //              _getType morph remap, which only fires when the RAW type isBuilding.
+  // Verified byte-identical to the per-unit-guard path by SB_MIRROR_SKIP=verify.
+  static u8 mirrorBlockTagForType(int typeId)
+  {
+    static const std::array<u8, UnitTypes::Enum::MAX> table = [] {
+      std::array<u8, UnitTypes::Enum::MAX> t{};
+      for (int id = 0; id < UnitTypes::Enum::MAX; ++id)
+      {
+        const UnitType ut(id);
+        u8 g = 0;
+        if (ut == UnitTypes::Protoss_Interceptor || ut == UnitTypes::Protoss_Scarab ||
+            ut == UnitTypes::Protoss_Carrier      || ut == UnitTypes::Hero_Gantrithor ||
+            ut == UnitTypes::Protoss_Reaver       || ut == UnitTypes::Hero_Warbringer ||
+            ut == UnitTypes::Terran_Vulture       || ut == UnitTypes::Hero_Jim_Raynor_Vulture)
+          g |= BW::MirrorFingerprint::kBlkUnion;
+        if (ut == UnitTypes::Terran_SCV || ut == UnitTypes::Zerg_Drone || ut == UnitTypes::Protoss_Probe)
+          g |= BW::MirrorFingerprint::kBlkPowerup;
+        if (ut.isBuilding() || ut.isResourceContainer() || ut.canProduce())
+          g |= BW::MirrorFingerprint::kBlkBuilding;
+        t[id] = g;
+      }
+      return t;
+    }();
+    return static_cast<unsigned>(typeId) < static_cast<unsigned>(UnitTypes::Enum::MAX) ? table[typeId] : 0;
+  }
+
   void UnitImpl::updateInternalData()
   {
     GameImpl& game = BroodwarImpl;  // hoist the thread_local deref (cut 3): one TLS wrapper call per invocation, not per access
@@ -158,11 +195,19 @@ namespace BWAPI
     if (isAlive && mirrorSkipEligible(o))
     {
       BW::MirrorFingerprint now;
-      o.mirrorFingerprint(&now);
+      // Path 2 type-partition: which type-blocks a unit reads is a pure function of its type, so
+      // the selection is one table read (mirrorBlockTagForType) instead of per-unit guard
+      // evaluation -- keeping the byte-shrink while removing the per-unit predicate cost.
+      o.mirrorFingerprint(&now, mirrorBlockTagForType(o.unitType()));
       // SNAP_RELOC on: read/write the relocated contiguous snapshot (streams under the SEQ
       // index-order pass); off: the embedded member (baseline). Same bytes either way -> byte-exact.
       BW::MirrorFingerprint& snap = mirrorSnapRelocEnabled() ? game.unitMirrorSnap[getIndex()] : mirrorSnap;
-      if (mirrorSnapValid && std::memcmp(&now, &snap, sizeof(now)) == 0)
+      // Variable-length compare: the fixed head (through block_tag/payload_len) plus only the
+      // packed blocks this unit carries. block_tag/payload_len live in the head, so a change in
+      // WHICH blocks are present blocks the skip; an army unit carries none (payload_len 0), so
+      // its per-frame memcmp is the head alone -- the bandwidth win.
+      const size_t fpCmpLen = offsetof(BW::MirrorFingerprint, raw_blocks) + now.payload_len;
+      if (mirrorSnapValid && std::memcmp(&now, &snap, fpCmpLen) == 0)
       {
         if (mirrorStreak >= 1)
         {

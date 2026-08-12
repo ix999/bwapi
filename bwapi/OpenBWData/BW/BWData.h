@@ -414,10 +414,13 @@ struct MirrorFingerprint {
   // this struct is memcmp'd every frame for every unit in every viewer, and that compare is 38.7%
   // of all last-level read misses under dual-host, so its WIDTH is the cost that matters.
   //
-  // kRawBlocks is the EXACT sum of the covered blocks (union 48 + worker.powerup 8 + building
-  // 104); BWData.cpp static_asserts equality in both directions. The full worker struct is 64,
-  // but only its 8-byte powerup pointer is ever read, so 56 dead bytes are dropped here.
+  // kRawBlocks is the raw_blocks CAPACITY: the sum of all three coverable blocks (union 48 +
+  // worker.powerup 8 + building 104 = 160), the payload of a unit that reads every block. Any
+  // one unit carries only the subset its type reads (block_tag / payload_len). The full worker
+  // struct is 64, but only its 8-byte powerup pointer is ever read, so 56 dead bytes are excluded.
   enum { kRawBlocks = 160 };
+  // block_tag bits, in raw_blocks packing order.
+  enum : u8 { kBlkUnion = 1, kBlkPowerup = 2, kBlkBuilding = 4 };
 
   u64 sprite, main_image, unit_type, order_type, sec_order_type;
   u64 mt_unit, ot_unit, subunit, connected_unit, current_build_unit;
@@ -449,6 +452,15 @@ struct MirrorFingerprint {
   s8 heading;                                  // direction_t is 8-bit
   u8 build_queue_size;                         // fixed-capacity 5 container
   u8 sub_present;
+
+  // Type-partition (Path 2): raw_blocks carries only the type-blocks this unit's type actually
+  // reads, packed front in fixed order (union, then powerup, then building). block_tag records
+  // the selection, payload_len its total size; BOTH sit in the compared head, so any change in
+  // which blocks are carried (a morph/type change moves unit_type/order_type too) forces a
+  // recompute. The per-frame compare runs over head + payload_len bytes only -- an army unit
+  // reads none of the three blocks (payload_len 0), so its memcmp shrinks to the head alone.
+  u8 block_tag;      // OR of kBlk* below: which blocks are present in raw_blocks
+  u8 payload_len;    // bytes of raw_blocks actually in use (<= kRawBlocks)
 
   u8 raw_blocks[kRawBlocks];
 };
@@ -515,7 +527,7 @@ struct Unit {
   int gatherQueueCount() const;
   Unit nextGatherer() const;
   int isBlind() const;
-  void mirrorFingerprint(MirrorFingerprint* dst) const;
+  void mirrorFingerprint(MirrorFingerprint* dst, u8 blockTag) const;
   int resourceType() const;
   int parasiteFlags() const;
   int stormTimer() const;
