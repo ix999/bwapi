@@ -93,6 +93,7 @@ namespace BWAPI
       players[i] = new PlayerImpl(i, bwgame.getPlayer(i));
 
     // iterate through units and create UnitImpl for each
+    unitMirrorSnap.resize(BW::UNIT_ARRAY_MAX_LENGTH);  // sb-perf: relocated snapshot store (SEQ path)
     for (u16 i = 0; i < BW::UNIT_ARRAY_MAX_LENGTH; ++i)
       unitArray[i] = new UnitImpl(bwgame.getUnit((size_t)i), i);
 

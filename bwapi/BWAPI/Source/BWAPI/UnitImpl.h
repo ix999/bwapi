@@ -328,6 +328,11 @@ namespace BWAPI
       std::unique_ptr<UnitData> mirrorVerifySnap;
       bool mirrorSkipEligible(BW::Unit& o) const;
       static bool mirrorVerifyMode();
+      // SBBOT_MIRROR_SEQ (read once). When on, computeUnitExistence runs the fingerprint build in
+      // engine-index order AND the memcmp reads the relocated contiguous snapshot store
+      // (GameImpl::unitMirrorSnap) so the cold operand streams too. When off, the embedded mirrorSnap
+      // above is used and the shipped path is byte-identical to baseline (no relocation, no reorder).
+      static bool mirrorSeqEnabled();
 
       Unitset connectedUnits;
       Unitset loadedUnits;

@@ -77,10 +77,7 @@ namespace BWAPI
     // the engine-node-list pointer-chase below into an engine-INDEX-order pass at the end of this
     // function, so its ~15-cache-line scattered unit_t reads stream (piecewise-contiguous
     // object_container) for the HW prefetcher. Read once; default off (kill-switch, rule 14).
-    static const bool seqMirror = [] {
-      const char* v = std::getenv("SBBOT_MIRROR_SEQ");
-      return v && *v && std::strcmp(v, "0") != 0;
-    }();
+    const bool seqMirror = UnitImpl::mirrorSeqEnabled();  // shared cached reader (UnitUpdate.cpp)
     // Alive units collected (index, ptr) during the three node-list walks below, so the sequential
     // pass touches only the ~n alive units in engine-INDEX order -- never the ~1700 dead unitArray
     // slots. thread_local: per dual-host viewer; capacity is reused frame-to-frame.
