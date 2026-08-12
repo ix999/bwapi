@@ -394,9 +394,12 @@ struct PlayerMirrorFingerprint {
 // UnitImpl::updateInternalData()/updateData(). One fill call replaces the ~100 accessor
 // crossings those functions make; byte-equal fingerprints across consecutive frames prove
 // their outputs identical, so the recompute can be skipped (guard logic lives BWAPI-side).
-// raw_blocks carries verbatim copies of the type-specific union, worker and building
-// blocks so every union-derived read is covered without per-type field logic. Trivially
-// copyable, zero-filled before fill — memcmp-comparable including padding.
+// raw_blocks carries verbatim copies of the type-specific union and building blocks, plus
+// the single live worker field (worker.powerup), so every union/building-derived read is
+// covered without per-type field logic. The rest of the 64-byte worker block is omitted:
+// worker.powerup is the ONLY worker-block field the mirror boundary reads (Unit::getPowerUp),
+// so the other 56 bytes can never make the mirror stale. Trivially copyable, zero-filled
+// before fill — memcmp-comparable including padding.
 struct MirrorFingerprint {
   // Width-narrowed with CHECKED conversions (see fp_u8/fp_u16/fp_s16 in BWData.cpp). The engine
   // declares every one of these `int`, so the narrower width is justified per field from what can
@@ -411,9 +414,10 @@ struct MirrorFingerprint {
   // this struct is memcmp'd every frame for every unit in every viewer, and that compare is 38.7%
   // of all last-level read misses under dual-host, so its WIDTH is the cost that matters.
   //
-  // kRawBlocks is the EXACT sum of the three unit_t blocks (union 48 + worker 64 + building 104);
-  // BWData.cpp static_asserts equality in both directions.
-  enum { kRawBlocks = 216 };
+  // kRawBlocks is the EXACT sum of the covered blocks (union 48 + worker.powerup 8 + building
+  // 104); BWData.cpp static_asserts equality in both directions. The full worker struct is 64,
+  // but only its 8-byte powerup pointer is ever read, so 56 dead bytes are dropped here.
+  enum { kRawBlocks = 160 };
 
   u64 sprite, main_image, unit_type, order_type, sec_order_type;
   u64 mt_unit, ot_unit, subunit, connected_unit, current_build_unit;

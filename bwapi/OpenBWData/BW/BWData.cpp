@@ -2654,23 +2654,26 @@ void Unit::mirrorFingerprint(MirrorFingerprint* dst) const
       }
     }
   }
-  // Raw copies of the type-specific blocks: every union/worker/building-derived read
-  // (resource counts, gather queue, addon/rally/silo/nydus links, fighter parent, mine
-  // counts, hangar counts) is covered verbatim without per-type logic.
+  // Raw copies of the type-specific blocks: every union/building-derived read (resource
+  // counts, gather queue, addon/rally/silo/nydus links, fighter parent, mine counts, hangar
+  // counts) is covered verbatim without per-type logic. The worker block contributes only its
+  // powerup pointer: worker.powerup is the ONLY worker-block field the mirror boundary reads
+  // (Unit::getPowerUp), so copying the other 56 bytes would compare state no recompute
+  // consumes. powerup sits first in the worker struct, so &worker.powerup == &worker.
   constexpr size_t kUnion = sizeof(bwgame::unit_t{}.vulture) > sizeof(bwgame::unit_t{}.carrier)
                               ? sizeof(bwgame::unit_t{}.vulture) : sizeof(bwgame::unit_t{}.carrier);
   constexpr size_t kUnion2 = kUnion > sizeof(bwgame::unit_t{}.fighter) ? kUnion : sizeof(bwgame::unit_t{}.fighter);
   constexpr size_t kUnion3 = kUnion2 > sizeof(bwgame::unit_t{}.beacon) ? kUnion2 : sizeof(bwgame::unit_t{}.beacon);
   constexpr size_t kUnion4 = kUnion3 > sizeof(bwgame::unit_t{}.ghost) ? kUnion3 : sizeof(bwgame::unit_t{}.ghost);
-  constexpr size_t kWorker = sizeof(bwgame::unit_t{}.worker);
+  constexpr size_t kPowerup = sizeof(bwgame::unit_t{}.worker.powerup);
   constexpr size_t kBuilding = sizeof(bwgame::unit_t{}.building);
-  static_assert(kUnion4 + kWorker + kBuilding == sizeof(dst->raw_blocks),
-                "MirrorFingerprint::raw_blocks must be EXACTLY the three unit_t blocks: too small "
-                "loses coverage, too large compares guaranteed-zero padding every frame per unit "
-                "per viewer (it was 320 for a 216-byte payload). Update kRawBlocks in BWData.h.");
+  static_assert(kUnion4 + kPowerup + kBuilding == sizeof(dst->raw_blocks),
+                "MirrorFingerprint::raw_blocks must be EXACTLY union + worker.powerup + building: "
+                "too small loses coverage, too large compares guaranteed-zero padding every frame "
+                "per unit per viewer. Update kRawBlocks in BWData.h.");
   u8* b = dst->raw_blocks;
   std::memcpy(b, &p->vulture, kUnion4); b += kUnion4;
-  std::memcpy(b, &p->worker, kWorker); b += kWorker;
+  std::memcpy(b, &p->worker.powerup, kPowerup); b += kPowerup;
   std::memcpy(b, &p->building, kBuilding);
 }
 
