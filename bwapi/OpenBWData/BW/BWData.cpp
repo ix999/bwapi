@@ -1,4 +1,5 @@
 #include "BWData.h"
+#include "CachedAssetLoader.h"
 
 #include "bwgame.h"
 #include "actions.h"
@@ -1193,7 +1194,12 @@ void g_global_init(std::string mpq_path) {
   if (global_inited) return;
   std::lock_guard<std::mutex> l(*global_init_mut);
   if (global_inited) return;
-  bwgame::global_init(*g_global_st, bwgame::data_loading::data_files_directory(mpq_path.c_str()));
+  // Decompressed-asset cache (BW/CachedAssetLoader.h): warm starts skip the ~650M-Ir MPQ
+  // decompress entirely. OPENBW_ASSET_CACHE=0/verify per the shared env contract.
+  {
+    auto cached = BW::make_cached_asset_loader(mpq_path);
+    bwgame::global_init(*g_global_st, cached);
+  }
   global_inited = true;
 }
 
