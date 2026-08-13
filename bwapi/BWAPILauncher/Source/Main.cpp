@@ -17,6 +17,11 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <vector>
+#include <algorithm>
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/time.h>
 
 // ---- Dual-host mode (ENGINE_OPT_DUALHOST.md): OPENBW_DUAL_HOST=1 hosts BOTH bots in this
 // process against ONE simulation — no lockstep peer, no IPC, no duplicate sim. Each bot runs
@@ -356,48 +361,95 @@ int run_one_dual_game() {
     }
 }
 
-// SERIAL-K WORKER (docs/design/MULTI_GAME_HOST.md increment 2): SB_SERIAL_QUEUE names a file of
-// game specs, one per line: map|race1|race2|seed|frames|p1_ai|p2_ai|log. The worker plays them
-// SEQUENTIALLY in this one process — global_st (dat tables, GRP headers; the asset-cache-fed
-// load) and the process itself are reused, while every game gets a fresh GameOwner (fresh engine
-// state — no reset-completeness surface) and fresh per-game module paths from the queue (fresh
-// dlopen images, so bot statics reset). Frame-keyed process globals are invalidated per game via
-// mirrorShareNextGame() (the audit's first entry). A game failure logs and the queue CONTINUES —
-// a crash costs one game plus wall time; the harness re-queues by seed (deterministic retry).
+// SERIAL-K WORKER (docs/design/MULTI_GAME_HOST.md increment 2): plays game specs SEQUENTIALLY
+// in this one process — global_st (dat tables, GRP headers; the asset-cache-fed load) and the
+// process itself are reused, while every game gets a fresh GameOwner (fresh engine state — no
+// reset-completeness surface) and fresh per-game module paths from the spec (fresh dlopen
+// images, so bot statics reset). Frame-keyed process globals are invalidated per game via
+// mirrorShareNextGame() (the audit's first entry). A game failure logs and the worker CONTINUES
+// — a crash costs one game plus wall time; the harness re-queues by seed (deterministic retry).
+// Spec line format (both feeds): map|race1|race2|seed|frames|p1_ai|p2_ai|log
+//   SB_SERIAL_QUEUE=<file>  fixed queue — every line, in order.
+//   SB_SERIAL_SPOOL=<dir>   WORK-STEALING feed (takes precedence): the spool holds one *.spec
+//     file per game; workers claim specs by atomic rename() (same-filesystem, so exactly one
+//     claimant wins; the renamed file no longer matches *.spec and is never rescanned) and
+//     rescan between games until the spool is empty. Fixes the static-partition straggler loss
+//     measured on the round-robin queues (a finished worker idled while a 3-game queue ran on).
+static bool play_spec_line(const std::string& line, int& played, int& failed) {
+  if (line.empty() || line[0] == '#') return true;
+  std::array<std::string, 8> f;
+  size_t pos = 0;
+  for (int i = 0; i != 8; ++i) {
+    const size_t bar = line.find('|', pos);
+    f[i] = line.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
+    if (bar == std::string::npos) { if (i != 7) f[0].clear(); break; }
+    pos = bar + 1;
+  }
+  if (f[0].empty()) { printf("serial: bad spec line: %s\n", line.c_str()); ++failed; return false; }
+  ::setenv("BWAPI_CONFIG_AUTO_MENU__MAP", f[0].c_str(), 1);
+  ::setenv("BWAPI_CONFIG_AUTO_MENU__RACE", f[1].c_str(), 1);
+  ::setenv("SBBOT_P2_RACE", f[2].c_str(), 1);
+  ::setenv("OPENBW_GAME_SEED", f[3].c_str(), 1);
+  ::setenv("SBBOT_SMOKE_FRAMES", f[4].c_str(), 1);
+  ::setenv("BWAPI_CONFIG_AI__AI", f[5].c_str(), 1);
+  ::setenv("SBBOT_P2_AI", f[6].c_str(), 1);
+  if (!std::freopen(f[7].c_str(), "w", stdout)) { ++failed; return false; }
+  BWAPI::mirrorShareNextGame();
+  // Per-game wall on stderr (stdout is the game log — digests untouched): the worker-lifetime
+  // gradient is the discriminator between scheduler priority decay (games slow monotonically)
+  // and structural in-process cost (uniform).
+  struct timeval t0, t1;
+  ::gettimeofday(&t0, nullptr);
+  const int rc = run_one_dual_game();
+  ::gettimeofday(&t1, nullptr);
+  fflush(stdout);
+  fprintf(stderr, "serial: game %d seed=%s wall=%.2f rc=%d\n", played,
+          f[3].c_str(), (t1.tv_sec - t0.tv_sec) + (t1.tv_usec - t0.tv_usec) / 1e6, rc);
+  if (rc != 0) ++failed;
+  ++played;
+  return true;
+}
+
 int dual_main() {
   BW::sacrificeThreadForUI([]{
+    const char* spool_path = std::getenv("SB_SERIAL_SPOOL");
     const char* queue_path = std::getenv("SB_SERIAL_QUEUE");
-    if (!queue_path || !*queue_path) {
+    if ((!spool_path || !*spool_path) && (!queue_path || !*queue_path)) {
       return run_one_dual_game();
     }
-    std::ifstream qf(queue_path);
-    if (!qf) { printf("serial: cannot open queue %s\n", queue_path); return 1; }
-    std::string line;
     int played = 0, failed = 0;
-    while (std::getline(qf, line)) {
-      if (line.empty() || line[0] == '#') continue;
-      std::array<std::string, 8> f;
-      size_t pos = 0;
-      for (int i = 0; i != 8; ++i) {
-        const size_t bar = line.find('|', pos);
-        f[i] = line.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
-        if (bar == std::string::npos) { if (i != 7) f[0].clear(); break; }
-        pos = bar + 1;
+    if (spool_path && *spool_path) {
+      const std::string dir = spool_path;
+      const std::string claim = ".claimed." + std::to_string((long long)::getpid());
+      for (;;) {
+        std::vector<std::string> specs;
+        DIR* d = ::opendir(dir.c_str());
+        if (!d) { fprintf(stderr, "serial: cannot open spool %s\n", dir.c_str()); break; }
+        struct dirent* de;
+        while ((de = ::readdir(d)) != nullptr) {
+          const std::string n = de->d_name;
+          if (n.size() > 5 && n.compare(n.size() - 5, 5, ".spec") == 0) specs.push_back(n);
+        }
+        ::closedir(d);
+        if (specs.empty()) break;
+        std::sort(specs.begin(), specs.end());
+        bool won_one = false;
+        for (const std::string& n : specs) {
+          const std::string from = dir + "/" + n, to = from + claim;
+          if (std::rename(from.c_str(), to.c_str()) != 0) continue;   // lost the race — next
+          std::ifstream sf(to);
+          std::string line;
+          if (std::getline(sf, line)) play_spec_line(line, played, failed);
+          won_one = true;
+          break;   // rescan after each game (a scan is trivia next to a game)
+        }
+        (void)won_one;   // lost every race this pass: rescan — a shrunk set or empty ends it
       }
-      if (f[0].empty()) { printf("serial: bad queue line: %s\n", line.c_str()); ++failed; continue; }
-      ::setenv("BWAPI_CONFIG_AUTO_MENU__MAP", f[0].c_str(), 1);
-      ::setenv("BWAPI_CONFIG_AUTO_MENU__RACE", f[1].c_str(), 1);
-      ::setenv("SBBOT_P2_RACE", f[2].c_str(), 1);
-      ::setenv("OPENBW_GAME_SEED", f[3].c_str(), 1);
-      ::setenv("SBBOT_SMOKE_FRAMES", f[4].c_str(), 1);
-      ::setenv("BWAPI_CONFIG_AI__AI", f[5].c_str(), 1);
-      ::setenv("SBBOT_P2_AI", f[6].c_str(), 1);
-      if (!std::freopen(f[7].c_str(), "w", stdout)) { ++failed; continue; }
-      BWAPI::mirrorShareNextGame();
-      const int rc = run_one_dual_game();
-      fflush(stdout);
-      if (rc != 0) ++failed;
-      ++played;
+    } else {
+      std::ifstream qf(queue_path);
+      if (!qf) { printf("serial: cannot open queue %s\n", queue_path); return 1; }
+      std::string line;
+      while (std::getline(qf, line)) play_spec_line(line, played, failed);
     }
     if (std::freopen("/dev/tty", "w", stdout) == nullptr)
       (void)std::freopen("/dev/null", "w", stdout);
