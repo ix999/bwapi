@@ -69,7 +69,15 @@ public:
 };
 
 inline MirrorPool& mirror_pool() {
+  // initial-exec TLS model: the general-dynamic default costs a __tls_get_addr call per pool
+  // access (callgrind 2026-08-13: 83K Ir/frame on the ladder ISA — the single largest linkage
+  // cost). libBWAPI/libBWAPILIB are load-time dependencies of the launcher (never dlopen'd), so
+  // initial-exec is legal and binds the slot at load. No-op on toolchains without the attribute.
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((tls_model("initial-exec"))) static thread_local MirrorPool pool;
+#else
   static thread_local MirrorPool pool;
+#endif
   return pool;
 }
 
