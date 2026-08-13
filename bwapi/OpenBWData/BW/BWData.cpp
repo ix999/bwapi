@@ -1067,6 +1067,39 @@ struct openbwapi_impl {
     add((uint64_t)st.lcg_rand_state);
     std::printf("SBDIG f=%d h=%016llx rng=%08x n0=%d n1=%d\n", st.current_frame,
                 (unsigned long long)h, (unsigned)st.lcg_rand_state, units[0], units[1]);
+    // SB_STATE_DIGEST_DUMP_AT=<frame>: one-frame per-unit field dump (plus per-slot resource
+    // sub-hashes), the digest ladder's microscope — when two SBDIG streams fork, dumping the fork
+    // frame on both stacks names the exact unit and field. Print-only, off unless set; the seam
+    // that closed the 2026-08-13 dead-state hunt (ENGINE_REVIEW_2026-08-12 §8).
+    static const int dump_at = [] {
+      const char* e = std::getenv("SB_STATE_DIGEST_DUMP_AT");
+      return e ? std::atoi(e) : -1;
+    }();
+    if ((int)st.current_frame == dump_at) {
+      for (int slot = 0; slot < 12; ++slot) {
+        uint64_t sh = 1469598103934665603ull;
+        auto sadd = [&](uint64_t value) {
+          for (int i = 0; i < 8; ++i) { sh ^= (value >> (i * 8)) & 0xff; sh *= 1099511628211ull; }
+        };
+        sadd((uint64_t)st.current_minerals[slot]);
+        sadd((uint64_t)st.current_gas[slot]);
+        for (auto& level : st.upgrade_levels.at(slot)) sadd((uint64_t)level);
+        for (auto researched : st.tech_researched.at(slot)) sadd((uint64_t)(researched ? 1 : 0));
+        std::printf("SBDUMP-SLOT f=%d s=%d min=%d gas=%d resthash=%016llx\n",
+                    st.current_frame, slot, st.current_minerals[slot], st.current_gas[slot],
+                    (unsigned long long)sh);
+        for (auto& unit : st.player_units[slot]) {
+          std::printf("SBDUMP f=%d s=%d idx=%d t=%d x=%d y=%d hp=%d sh=%d en=%d ord=%d gcd=%d scd=%d vx=%d vy=%d cs=%d\n",
+            st.current_frame, slot, (int)unit.index, (int)unit.unit_type->id,
+            (int)unit.sprite->position.x, (int)unit.sprite->position.y,
+            (int)unit.hp.raw_value, (int)unit.shield_points.raw_value, (int)unit.energy.raw_value,
+            unit.order_type ? (int)unit.order_type->id : -1,
+            (int)unit.ground_weapon_cooldown, (int)unit.spell_cooldown,
+            (int)unit.velocity.x.raw_value, (int)unit.velocity.y.raw_value,
+            (int)unit.current_speed.raw_value);
+        }
+      }
+    }
     std::fflush(stdout);
   }
 
