@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <vector>
@@ -36,6 +37,44 @@ namespace {
   // two dual-host viewers, same unit same frame? (That identical fraction is the ONLY part a
   // mirror-sharing design could ever deduplicate.) First viewer to fingerprint an engine index in
   // a frame stores its bytes; the second compares. Totals print to stderr at process exit.
+  // SB_MIRROR_FP_SHARE — dual-host fingerprint BYTE-share (ENGINE_REVIEW_2026-08-12 §9's queued
+  // increment). The fingerprint is a pure function of shared engine state — measured 100.0%
+  // byte-identical across the two viewers over 6.5M unit-frame pairs (SB_MIRROR_SHARE_PROBE) —
+  // so the second viewer to reach a unit each frame can memcpy the first viewer's bytes instead
+  // of re-walking ~15 scattered unit_t cache lines (fp build measured 359 Ir/call, 112K Ir/frame
+  // both viewers). Only the BYTES are shared: each viewer keeps its OWN snapshot, compare,
+  // streak and latency-compensation invalidation, which differ per viewer by design (a viewer's
+  // own commands invalidate only its own snaps). Sequential barriered dispatch = no concurrency.
+  // In two-process mode the frame never repeats per process, so every lookup misses and the path
+  // reduces to plain compute. unset/1 = on, 0 = off (kill-switch), verify = compute AND compare
+  // against the shared bytes, tallying mismatches to stderr at exit (the differential knob).
+  int mirrorFpShareMode()   // 0 = off, 1 = share, 2 = verify
+  {
+    static const int mode = [] {
+      const char* v = std::getenv("SB_MIRROR_FP_SHARE");
+      if (!v || !*v) return 1;
+      if (std::strcmp(v, "0") == 0) return 0;
+      if (std::strcmp(v, "verify") == 0) return 2;
+      return 1;
+    }();
+    return mode;
+  }
+  struct MirrorFpShare
+  {
+    struct Slot { int frame = -1; std::uint8_t tag = 0; size_t len = 0; unsigned char bytes[768]; };
+    std::vector<Slot> slots;
+    long long hits = 0, misses = 0, verifyMismatch = 0;
+    MirrorFpShare() : slots(1801) {}
+    ~MirrorFpShare()
+    {
+      if (!hits && !verifyMismatch) return;
+      std::fprintf(stderr, "MIRRORFPSHARE hits=%lld misses=%lld verify_mismatch=%lld\n",
+                   hits, misses, verifyMismatch);
+      std::fflush(stderr);
+    }
+  };
+  MirrorFpShare& mirrorFpShare() { static MirrorFpShare s; return s; }
+
   bool mirrorShareProbeEnabled()
   {
     static const bool on = [] {
@@ -291,7 +330,56 @@ namespace BWAPI
       // Path 2 type-partition: which type-blocks a unit reads is a pure function of its type, so
       // the selection is one table read (mirrorBlockTagForType) instead of per-unit guard
       // evaluation -- keeping the byte-shrink while removing the per-unit predicate cost.
-      o.mirrorFingerprint(&now, mirrorBlockTagForType(o.unitType()));
+      {
+        const int shareMode = mirrorFpShareMode();
+        const std::uint8_t blockTag = mirrorBlockTagForType(o.unitType());
+        bool shared = false;
+        MirrorFpShare::Slot* slot = nullptr;
+        if (shareMode)
+        {
+          const size_t idx = o.getIndex();
+          if (idx < mirrorFpShare().slots.size())
+          {
+            slot = &mirrorFpShare().slots[idx];
+            if (slot->frame == game.getFrameCount() && slot->tag == blockTag &&
+                slot->len <= sizeof(BW::MirrorFingerprint))
+            {
+              if (shareMode == 1)
+              {
+                std::memcpy(static_cast<void*>(&now), slot->bytes, slot->len);
+                shared = true;
+                ++mirrorFpShare().hits;
+              }
+              else   // verify: compute honestly, then compare against the shared bytes
+              {
+                o.mirrorFingerprint(&now, blockTag);
+                const size_t len = offsetof(BW::MirrorFingerprint, raw_blocks) + now.payload_len;
+                if (len != slot->len || std::memcmp(&now, slot->bytes, len) != 0)
+                  ++mirrorFpShare().verifyMismatch;
+                else
+                  ++mirrorFpShare().hits;
+                shared = true;   // fingerprint already computed
+              }
+            }
+          }
+        }
+        if (!shared)
+        {
+          o.mirrorFingerprint(&now, blockTag);
+          if (slot)
+          {
+            const size_t len = offsetof(BW::MirrorFingerprint, raw_blocks) + now.payload_len;
+            if (len <= sizeof(slot->bytes))
+            {
+              slot->frame = game.getFrameCount();
+              slot->tag = blockTag;
+              slot->len = len;
+              std::memcpy(slot->bytes, &now, len);
+            }
+            ++mirrorFpShare().misses;
+          }
+        }
+      }
       const size_t fpCmpLenProbe = offsetof(BW::MirrorFingerprint, raw_blocks) + now.payload_len;
       if (mirrorShareProbeEnabled())
         mirrorShareProbe().record(o.getIndex(), game.getFrameCount(),
