@@ -7,6 +7,9 @@
 #include <cstring>
 #include <limits>
 #include <sstream>
+#include <vector>
+#include <algorithm>
+#include <cstdio>
 
 #include <Util/Convenience.h>
 
@@ -26,6 +29,48 @@
 #include "BWtoBWAPI.h"
 
 #include "../../../Debug.h"
+
+namespace {
+  // SB_MIRROR_SHARE_PROBE=1 — print-only diagnostic answering ENGINE_REVIEW_2026-08-12 §3.5's
+  // close-out question: what fraction of per-unit fingerprint bytes are byte-identical across the
+  // two dual-host viewers, same unit same frame? (That identical fraction is the ONLY part a
+  // mirror-sharing design could ever deduplicate.) First viewer to fingerprint an engine index in
+  // a frame stores its bytes; the second compares. Totals print to stderr at process exit.
+  bool mirrorShareProbeEnabled()
+  {
+    static const bool on = [] {
+      const char* v = std::getenv("SB_MIRROR_SHARE_PROBE");
+      return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    return on;
+  }
+  struct MirrorShareProbe
+  {
+    struct Slot { int frame = -1; size_t len = 0; unsigned char bytes[768]; };
+    std::vector<Slot> slots;
+    long long identical = 0, total = 0, pairs = 0, lenMismatch = 0;
+    MirrorShareProbe() : slots(1801) {}
+    ~MirrorShareProbe()
+    {
+      if (!pairs) return;
+      std::fprintf(stderr,
+        "MIRRORSHARE pairs=%lld identical_bytes=%lld total_bytes=%lld share=%.1f%% len_mismatch=%lld\n",
+        pairs, identical, total, total ? 100.0 * identical / total : 0.0, lenMismatch);
+      std::fflush(stderr);
+    }
+    void record(size_t engineIndex, int frame, const unsigned char* bytes, size_t len)
+    {
+      if (engineIndex >= slots.size() || len > sizeof(Slot::bytes)) return;
+      Slot& s = slots[engineIndex];
+      if (s.frame != frame) { s.frame = frame; s.len = len; std::memcpy(s.bytes, bytes, len); return; }
+      ++pairs;
+      if (s.len != len) { ++lenMismatch; total += (long long)std::max(s.len, len); return; }
+      total += (long long)len;
+      for (size_t i = 0; i != len; ++i) if (s.bytes[i] == bytes[i]) ++identical;
+    }
+  };
+  MirrorShareProbe& mirrorShareProbe() { static MirrorShareProbe p; return p; }
+}
 
 namespace BWAPI
 {
@@ -247,6 +292,10 @@ namespace BWAPI
       // the selection is one table read (mirrorBlockTagForType) instead of per-unit guard
       // evaluation -- keeping the byte-shrink while removing the per-unit predicate cost.
       o.mirrorFingerprint(&now, mirrorBlockTagForType(o.unitType()));
+      const size_t fpCmpLenProbe = offsetof(BW::MirrorFingerprint, raw_blocks) + now.payload_len;
+      if (mirrorShareProbeEnabled())
+        mirrorShareProbe().record(o.getIndex(), game.getFrameCount(),
+                                  reinterpret_cast<const unsigned char*>(&now), fpCmpLenProbe);
       // Variable-length compare: the fixed head (through block_tag/payload_len) plus only the
       // packed blocks this unit carries. block_tag/payload_len live in the head, so a change in
       // WHICH blocks are present blocks the skip; an army unit carries none (payload_len 0), so
