@@ -7,6 +7,9 @@
 #include <cctype>
 #include <string>
 #include <memory>
+#include <fstream>
+#include <array>
+#include <string>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -20,6 +23,8 @@
 // updates are barriered strictly sequentially each frame, then the main thread steps the sim
 // once. Env: BWAPI_CONFIG_AI__AI + BWAPI_CONFIG_AUTO_MENU__RACE for bot 0; SBBOT_P2_AI (a
 // DISTINCT FILE COPY of the module) + SBBOT_P2_RACE for bot 1.
+
+namespace BWAPI { void mirrorShareNextGame(); }   // UnitUpdate.cpp — serial-K per-game reset
 
 namespace {
 
@@ -111,8 +116,7 @@ void lane_wait_done(bot_lane_t& lane) {
   lane.done = false;
 }
 
-int dual_main() {
-  BW::sacrificeThreadForUI([]{
+int run_one_dual_game() {
     try {
       BW::GameOwner gameOwner;
 
@@ -311,6 +315,55 @@ int dual_main() {
       printf("dual error: %s\n", e.what());
       return 1;
     }
+}
+
+// SERIAL-K WORKER (docs/design/MULTI_GAME_HOST.md increment 2): SB_SERIAL_QUEUE names a file of
+// game specs, one per line: map|race1|race2|seed|frames|p1_ai|p2_ai|log. The worker plays them
+// SEQUENTIALLY in this one process — global_st (dat tables, GRP headers; the asset-cache-fed
+// load) and the process itself are reused, while every game gets a fresh GameOwner (fresh engine
+// state — no reset-completeness surface) and fresh per-game module paths from the queue (fresh
+// dlopen images, so bot statics reset). Frame-keyed process globals are invalidated per game via
+// mirrorShareNextGame() (the audit's first entry). A game failure logs and the queue CONTINUES —
+// a crash costs one game plus wall time; the harness re-queues by seed (deterministic retry).
+int dual_main() {
+  BW::sacrificeThreadForUI([]{
+    const char* queue_path = std::getenv("SB_SERIAL_QUEUE");
+    if (!queue_path || !*queue_path) {
+      return run_one_dual_game();
+    }
+    std::ifstream qf(queue_path);
+    if (!qf) { printf("serial: cannot open queue %s\n", queue_path); return 1; }
+    std::string line;
+    int played = 0, failed = 0;
+    while (std::getline(qf, line)) {
+      if (line.empty() || line[0] == '#') continue;
+      std::array<std::string, 8> f;
+      size_t pos = 0;
+      for (int i = 0; i != 8; ++i) {
+        const size_t bar = line.find('|', pos);
+        f[i] = line.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
+        if (bar == std::string::npos) { if (i != 7) f[0].clear(); break; }
+        pos = bar + 1;
+      }
+      if (f[0].empty()) { printf("serial: bad queue line: %s\n", line.c_str()); ++failed; continue; }
+      ::setenv("BWAPI_CONFIG_AUTO_MENU__MAP", f[0].c_str(), 1);
+      ::setenv("BWAPI_CONFIG_AUTO_MENU__RACE", f[1].c_str(), 1);
+      ::setenv("SBBOT_P2_RACE", f[2].c_str(), 1);
+      ::setenv("OPENBW_GAME_SEED", f[3].c_str(), 1);
+      ::setenv("SBBOT_SMOKE_FRAMES", f[4].c_str(), 1);
+      ::setenv("BWAPI_CONFIG_AI__AI", f[5].c_str(), 1);
+      ::setenv("SBBOT_P2_AI", f[6].c_str(), 1);
+      if (!std::freopen(f[7].c_str(), "w", stdout)) { ++failed; continue; }
+      BWAPI::mirrorShareNextGame();
+      const int rc = run_one_dual_game();
+      fflush(stdout);
+      if (rc != 0) ++failed;
+      ++played;
+    }
+    if (std::freopen("/dev/tty", "w", stdout) == nullptr)
+      (void)std::freopen("/dev/null", "w", stdout);
+    fprintf(stderr, "serial: queue done, played=%d failed=%d\n", played, failed);
+    return failed ? 1 : 0;
   });
   return 0;
 }

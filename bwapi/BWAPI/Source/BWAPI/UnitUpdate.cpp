@@ -61,7 +61,10 @@ namespace {
   }
   struct MirrorFpShare
   {
-    struct Slot { int frame = -1; std::uint8_t tag = 0; size_t len = 0; unsigned char bytes[768]; };
+    struct Slot { int frame = -1; int gen = -1; std::uint8_t tag = 0; size_t len = 0; unsigned char bytes[768]; };
+    int generation = 0;   // bumped per game (serial-K workers): frame numbers RESTART across
+                          // games in one process, so frame-keying alone would serve game N-1's
+                          // stale bytes to game N at coinciding frames — the audit's first entry.
     std::vector<Slot> slots;
     long long hits = 0, misses = 0, verifyMismatch = 0;
     MirrorFpShare() : slots(1801) {}
@@ -113,6 +116,10 @@ namespace {
 
 namespace BWAPI
 {
+  // Serial-K worker hook (docs/design/MULTI_GAME_HOST.md increment 2): invalidate every
+  // cross-viewer fingerprint-share slot at the start of each in-process game.
+  void mirrorShareNextGame() { ++mirrorFpShare().generation; }
+
   // Just hardcode some values that encompass the majority of the scanner graphic (as a hack for now)
   // Note that scanner sweeps are tricky, since the scanning graphic isn't associated with the scanner unit
   bool isScannerVisible(BW::Position position)
@@ -341,8 +348,8 @@ namespace BWAPI
           if (idx < mirrorFpShare().slots.size())
           {
             slot = &mirrorFpShare().slots[idx];
-            if (slot->frame == game.getFrameCount() && slot->tag == blockTag &&
-                slot->len <= sizeof(BW::MirrorFingerprint))
+            if (slot->frame == game.getFrameCount() && slot->gen == mirrorFpShare().generation &&
+                slot->tag == blockTag && slot->len <= sizeof(BW::MirrorFingerprint))
             {
               if (shareMode == 1)
               {
@@ -372,6 +379,7 @@ namespace BWAPI
             if (len <= sizeof(slot->bytes))
             {
               slot->frame = game.getFrameCount();
+              slot->gen = mirrorFpShare().generation;
               slot->tag = blockTag;
               slot->len = len;
               std::memcpy(slot->bytes, &now, len);
