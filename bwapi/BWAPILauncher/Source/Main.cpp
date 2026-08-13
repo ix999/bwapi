@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
 #include <map>
 #include <set>
@@ -43,16 +44,50 @@ struct bot_lane_t {
   std::thread th;
   std::mutex m;
   std::condition_variable cv;
-  bool go = false, done = false, quit = false, finish = false;
+  std::atomic<bool> go{false}, done{false};
+  bool quit = false, finish = false;
   bool module_ok = true;
 };
+
+// SPIN-THEN-WAIT seam on the per-frame lane handshake (SB_LANE_SPIN=<iterations>, DEFAULT 0 =
+// pure condvar). The baton passes sim -> bot0 -> sim -> bot1 -> sim every frame — 4 kernel wake
+// round-trips — and a 2026-08-13 fleet sample showed threads parked in __psynch_cvwait 60-93%
+// of wall. MEASURED ON THE M2 (2026-08-13): spinning is NEGATIVE in BOTH regimes there —
+// saturated battery conc 9: cpu 93s -> 169s, wall 15.1s -> 23.9s (27 threads on 10 cores;
+// spinners steal cores from computers, whose condvar waits the scheduler was already filling
+// with other games' compute); solo: cpu 0.5 -> 1.1s, wall unchanged (the solo idle is
+// startup I/O + lobby, not wake latency). Default stays 0 on the Mac. The seam is kept for the
+// LADDER regime (one dual game, idle cores, different scheduler) — evaluate in the container
+// before enabling there. Ordering: the signaller's plain fields (quit/finish/module_ok) are
+// written before the release-store of the flag, so an acquire-load publishes them — the mutex
+// is only needed on the condvar sleep path. Timing-only either way: dispatch order is
+// unchanged, digests are unaffected (gated identical spin on/off).
+inline int lane_spin_iters() {
+  static const int iters = [] {
+    const char* e = std::getenv("SB_LANE_SPIN");
+    return e ? std::atoi(e) : 0;
+  }();
+  return iters;
+}
+
+inline bool lane_spin(std::atomic<bool>& flag) {
+  for (int i = lane_spin_iters(); i-- > 0;) {
+    if (flag.load(std::memory_order_acquire)) return true;
+#if defined(__aarch64__)
+    __asm__ __volatile__("isb");
+#elif defined(__x86_64__) || defined(__i386__)
+    __asm__ __volatile__("pause");
+#endif
+  }
+  return flag.load(std::memory_order_acquire);
+}
 
 void lane_signal_go(bot_lane_t& lane, bool quit = false, bool finish = false) {
   {
     std::lock_guard<std::mutex> lock(lane.m);
-    lane.go = true;
     lane.quit = quit;
     lane.finish = finish;
+    lane.go.store(true, std::memory_order_release);
   }
   lane.cv.notify_all();
 }
@@ -111,9 +146,11 @@ void apply_viewer_policy(const ViewerPolicies& vp, int viewer) {
 }
 
 void lane_wait_done(bot_lane_t& lane) {
-  std::unique_lock<std::mutex> lock(lane.m);
-  lane.cv.wait(lock, [&] { return lane.done; });
-  lane.done = false;
+  if (!lane_spin(lane.done)) {
+    std::unique_lock<std::mutex> lock(lane.m);
+    lane.cv.wait(lock, [&] { return lane.done.load(std::memory_order_acquire); });
+  }
+  lane.done.store(false, std::memory_order_release);
 }
 
 int run_one_dual_game() {
@@ -189,9 +226,11 @@ int run_one_dual_game() {
           while (true) {
             bool finishing;
             {
-              std::unique_lock<std::mutex> lock(lane.m);
-              lane.cv.wait(lock, [&] { return lane.go; });
-              lane.go = false;
+              if (!lane_spin(lane.go)) {
+                std::unique_lock<std::mutex> lock(lane.m);
+                lane.cv.wait(lock, [&] { return lane.go.load(std::memory_order_acquire); });
+              }
+              lane.go.store(false, std::memory_order_release);
               if (lane.quit) break;
               finishing = lane.finish;
             }
@@ -214,14 +253,14 @@ int run_one_dual_game() {
               fflush(stdout);
               {
                 std::lock_guard<std::mutex> lock(lane.m);
-                lane.done = true;
+                lane.done.store(true, std::memory_order_release);
               }
               lane.cv.notify_all();
               return;
             }
             {
               std::lock_guard<std::mutex> lock(lane.m);
-              lane.done = true;
+              lane.done.store(true, std::memory_order_release);
             }
             lane.cv.notify_all();
           }
@@ -233,7 +272,7 @@ int run_one_dual_game() {
           }
           {
             std::lock_guard<std::mutex> lock(lane.m);
-            lane.done = true;
+            lane.done.store(true, std::memory_order_release);
           }
           lane.cv.notify_all();
         });
