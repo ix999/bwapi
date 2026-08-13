@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <string>
+#include <optional>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -111,7 +112,16 @@ int dual_main() {
       for (int i = 0; i != 2; ++i) {
         lanes[i].th = std::thread([&gameOwner, &lanes, i]{
           BW::set_thread_viewer(i);
-          BWAPI::BroodwarImpl_handle h(gameOwner.getGame(i));
+          // LAZY HANDLE CONSTRUCTION (launch-race fix, 2026-08-13). BroodwarImpl_handle's
+          // constructor walks every unit slot (GameImpl ctor: getUnit over UNIT_ARRAY_MAX_LENGTH)
+          // — running that at thread spawn races the main thread's lobby/startGame() population
+          // of the flat units container: an unsynchronised read of half-constructed storage.
+          // Measured: 4 launcher SIGSEGVs on 2026-08-13, all with the identical backtrace
+          // getUnit → unit_dead → poisoned order_type (0x8080… KERN_INVALID_ADDRESS), one side
+          // of a dual game dying at load and forfeiting. Constructing on FIRST DISPATCH is safe
+          // by the existing design: go is only ever raised after startGame(), and dispatch is
+          // strictly barriered, so the container never mutates while a lane runs.
+          std::optional<BWAPI::BroodwarImpl_handle> h;
           auto& lane = lanes[i];
           while (true) {
             bool finishing;
@@ -122,21 +132,22 @@ int dual_main() {
               if (lane.quit) break;
               finishing = lane.finish;
             }
+            if (!h) h.emplace(gameOwner.getGame(i));
             // Section marker for the runner's log split: dispatch is strictly sequential, so
             // everything this bot prints (its own printf included — which never passes through
             // the Broodwar channel) lands between its marker and the next. Flush both sides so
             // block-buffered stdout cannot smear output across sections.
             printf("SBV%d>\n", i);
             fflush(stdout);
-            h->update();
+            (*h)->update();
             fflush(stdout);
-            lane.module_ok = h->externalModuleConnected;
+            lane.module_ok = (*h)->externalModuleConnected;
             if (finishing) {
               // The reference launcher's end sequence, per viewer: the update above ran at
               // the session-over state (firing the in-update MatchEnd with the REAL result —
               // the teardown fallback hardcodes MatchEnd(false)), then onGameEnd + leave.
-              h->onGameEnd();
-              h->bwgame.leaveGame();
+              (*h)->onGameEnd();
+              (*h)->bwgame.leaveGame();
               fflush(stdout);
               {
                 std::lock_guard<std::mutex> lock(lane.m);
@@ -151,8 +162,12 @@ int dual_main() {
             }
             lane.cv.notify_all();
           }
-          h->onGameEnd();
-          h->bwgame.leaveGame();
+          // quit can arrive before the first dispatch — then no handle was ever built and
+          // there is no session to end.
+          if (h) {
+            (*h)->onGameEnd();
+            (*h)->bwgame.leaveGame();
+          }
           {
             std::lock_guard<std::mutex> lock(lane.m);
             lane.done = true;
