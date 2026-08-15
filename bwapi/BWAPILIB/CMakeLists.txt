@@ -43,6 +43,10 @@ else()
   )
 endif()
 
+if(UNIX AND NOT APPLE)
+    target_link_libraries(BWAPILIB rt)
+endif()
+
 set_property(TARGET BWAPILIB PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 install(TARGETS BWAPILIB

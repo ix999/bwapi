@@ -21,6 +21,16 @@
 
 #include "../../../Debug.h"
 
+#ifndef _WIN32
+#include <cstdlib>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#endif
+
 namespace BWAPI
 {
   const int PIPE_TIMEOUT = 3000;
@@ -29,10 +39,86 @@ namespace BWAPI
   const BWAPI::GameInstance GameInstance_None(0, false, 0);
   Server::Server()
   {
-
-    if ( serverEnabled )
+#ifndef _WIN32
+    // sb: client shared-memory transport is OPT-IN (OPENBW_CLIENT_SUPPORT=1) — additive,
+    // default-off; every existing mode is byte-identical with the flag unset (rule 9).
+    const char* sbClientEnv = std::getenv("OPENBW_CLIENT_SUPPORT");
+    clientSupport = serverEnabled && sbClientEnv && sbClientEnv[0] == '1';
+    auto processID = getpid();
+    if ( clientSupport )
     {
+      gameTableFileHandle = shm_open("/bwapi_shared_memory_game_list", O_RDWR | O_CREAT, S_IRWXU);
+      if (gameTableFileHandle >= 0)
+      {
+        gameTable = static_cast<GameTable *>(mmap(NULL, sizeof(GameTable), PROT_WRITE | PROT_READ, MAP_SHARED, gameTableFileHandle, 0));
+        if (gameTable)
+        {
+          struct stat stat;
+          if (!fstat(gameTableFileHandle, &stat) && stat.st_size == 0)
+          {
+            if (!ftruncate(gameTableFileHandle, sizeof(GameTable)))
+            {
+              // If we created it, initialize it
+              for (int i = 0; i < GameTable::MAX_GAME_INSTANCES; ++i)
+                gameTable->gameInstances[i] = GameInstance_None;
+            } // If does not already exist
+          }
+          // Check to see if we are already in the table
+          for (int i = 0; i < GameTable::MAX_GAME_INSTANCES; ++i)
+          {
+            if (gameTable->gameInstances[i].serverProcessID == processID)
+            {
+              gameTableIndex = i;
+              break;
+            }
+          }
+          // If not, try to find an empty row
+          if (gameTableIndex == -1)
+          {
+            for (int i = 0; i < GameTable::MAX_GAME_INSTANCES; ++i)
+            {
+              if (gameTable->gameInstances[i].serverProcessID == 0)
+              {
+                gameTableIndex = i;
+                break;
+              }
+            }
+          }
+          // If we can't find an empty row, take over the row with the oldest keep alive time
+          if (gameTableIndex == -1)
+          {
+            auto oldest = gameTable->gameInstances[0].lastKeepAliveTime;
+            gameTableIndex = 0;
+            for (int i = 1; i < GameTable::MAX_GAME_INSTANCES; ++i)
+            {
+              if (gameTable->gameInstances[i].lastKeepAliveTime < oldest)
+              {
+                oldest = gameTable->gameInstances[i].lastKeepAliveTime;
+                gameTableIndex = i;
+                }
+            }
+          }
+          //We have a game table index now, initialize our row
+          gameTable->gameInstances[gameTableIndex].serverProcessID = processID;
+          gameTable->gameInstances[gameTableIndex].isConnected = false;
+          struct timespec ts;
+          if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+            gameTable->gameInstances[gameTableIndex].lastKeepAliveTime = ts.tv_sec;
+        } // if gameTable
+      }   // if gameTableFileHandle
+
+      // Create the share name
+      std::stringstream ssShareName;
+      ssShareName << "/bwapi_shared_memory_";
+      ssShareName << processID;
+      shareName = ssShareName.str();
+
+      // Create the file mapping and shared memory
+      mapFileHandle = shm_open(shareName.c_str(), O_RDWR | O_CREAT, S_IRWXU);
+      if (ftruncate(mapFileHandle, sizeof(GameData)) == 0 && mapFileHandle)
+        data = static_cast<GameData *>(mmap(NULL, sizeof(GameData), PROT_WRITE | PROT_READ, MAP_SHARED, mapFileHandle, 0));
     } // if serverEnabled
+#endif
 
     // check if memory was created or if we should create it locally
     if ( !data )
@@ -42,8 +128,27 @@ namespace BWAPI
     }
     initializeSharedMemory();
 
-    if ( serverEnabled )
+    if ( clientSupport )
     {
+#ifndef _WIN32
+      syncSocket = socket(AF_UNIX, SOCK_STREAM, 0);
+      if (syncSocket >= 0)
+      {
+        struct sockaddr_un name;
+        memset(&name, 0, sizeof(struct sockaddr_un));
+
+        name.sun_family = AF_UNIX;
+        std::stringstream communicationSocket;
+        communicationSocket << "/tmp/bwapi_socket_";
+        communicationSocket << processID;
+        strncpy(name.sun_path, communicationSocket.str().c_str(), communicationSocket.str().length());
+        unlink(communicationSocket.str().c_str());
+        if (bind(syncSocket, (const struct sockaddr *)&name, sizeof(struct sockaddr_un)) == 0)
+        {
+          listen(syncSocket, 0);
+        }
+      }
+#endif
     }
   }
   Server::~Server()
@@ -54,6 +159,48 @@ namespace BWAPI
       delete data;
       data = nullptr;
     }
+
+    if (clientSupport)
+    {
+#ifndef _WIN32
+      munmap(data, sizeof(GameData));
+      munmap(gameTable, sizeof(GameTable));
+      close(syncSocket);
+      shm_unlink(shareName.c_str());
+      shm_unlink("/bwapi_shared_memory_game_list");
+#endif
+    }
+  }
+  void Server::waitForClient()
+  {
+#ifndef _WIN32
+    // sb: pre-game client wait (OPENBW_CLIENT_SUPPORT=1). Accept + game-table keepalive ONLY --
+    // the full update() pump runs BroodwarImpl.processEvents(), which in this fork drives game
+    // startup and must not execute before autoMenuManager.startGame().
+    while (clientSupport && !connected)
+    {
+      if (gameTable && gameTableIndex >= 0)
+      {
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+          gameTable->gameInstances[gameTableIndex].lastKeepAliveTime = ts.tv_sec;
+      }
+      checkForConnections();   // blocks in a 5 s select window per pass
+    }
+    // Mark the game-table row taken so a second client skips it. The first update() must NOT
+    // run pre-game (it would push a frame + events from a not-yet-started game; the client's
+    // Game.init would read self=-1): the normal in-game loop delivers the first frame.
+    if (connected && gameTable && gameTableIndex >= 0)
+      gameTable->gameInstances[gameTableIndex].isConnected = true;
+    // One bare pre-game handshake cycle (no event export, no commands: GameData is still the
+    // ctor/initializeSharedMemory state with isInGame=0). JBWAPI only creates its bot Game on
+    // OBSERVING the isInGame false->true transition inside its prologue loop; without this
+    // baseline frame the client races game start and can first observe isInGame already true,
+    // then NPEs on its never-created bot Game (basil's launcher achieved the same baseline
+    // with a full pre-game update(), which our fork cannot run pre-game).
+    if (connected)
+      callOnFrame();
+#endif
   }
   void Server::update()
   {
@@ -65,7 +212,9 @@ namespace BWAPI
     data->shapeCount       = 0;
     if (gameTable && gameTableIndex >= 0)
     {
-      gameTable->gameInstances[gameTableIndex].lastKeepAliveTime = 0;
+      struct timespec ts;
+      if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+        gameTable->gameInstances[gameTableIndex].lastKeepAliveTime = ts.tv_sec;
       gameTable->gameInstances[gameTableIndex].isConnected = connected;
     }
     if (connected)
@@ -147,6 +296,31 @@ namespace BWAPI
   }
   void Server::checkForConnections()
   {
+#ifndef _WIN32
+    if (connected || localOnly)
+      return;
+    std::stringstream communicationSocket;
+    communicationSocket << "/tmp/bwapi_socket_";
+    communicationSocket << getpid();
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(syncSocket, &rfds);
+    int available = select(syncSocket + 1, &rfds, NULL, NULL, &tv);
+    if (available > 0)
+    {
+      int data_socket = accept(syncSocket, NULL, NULL);
+      close(syncSocket);
+      unlink(communicationSocket.str().c_str());
+      shm_unlink(shareName.c_str());
+
+      syncSocket = data_socket;
+
+      connected = true;
+    }
+#endif
   }
   void Server::initializeSharedMemory()
   {
@@ -195,11 +369,7 @@ namespace BWAPI
       {
         data->isBuildable[x][y] = Broodwar->isBuildable(x, y);
         data->getGroundHeight[x][y] = Broodwar->getGroundHeight(x, y);
-        //if (BW::BWDATA::SAIPathing )
-        //  data->mapTileRegionId[x][y] = BW::BWDATA::SAIPathing->mapTileRegionId[y][x];
-        //else
-        //  data->mapTileRegionId[x][y] = 0;
-        data->mapTileRegionId[x][y] = 0;
+        data->mapTileRegionId[x][y] = Broodwar->getRegionAt(x, y)->getID();
       }
 
     // Load pathing info
@@ -223,6 +393,19 @@ namespace BWAPI
 //        }
 //      }
 //    }
+    data->regionCount = Broodwar->getAllRegions().size();
+    for (int i = 0; i < 5000; i++)
+    {
+      BWAPI::Region r = Broodwar->getRegion(i);
+      if (r)
+      {
+        data->regions[i] = *static_cast<RegionImpl *>(r)->getData();
+      }
+      else
+      {
+        MemZero(data->regions[i]);
+      }
+    }
 
     // Store the map size
     data->mapWidth  = mapSize.x;
@@ -311,7 +494,7 @@ namespace BWAPI
 
     data->frameCount              = Broodwar->getFrameCount();
     data->replayFrameCount        = Broodwar->getReplayFrameCount();
-    data->randomSeed              = Broodwar->getRandomSeed();
+    data->randomSeed = 0; //Broodwar->getRandomSeed();
     data->fps                     = Broodwar->getFPS();
     data->botAPM_noselects        = Broodwar->getAPM(false);
     data->botAPM_selects          = Broodwar->getAPM(true);
@@ -320,7 +503,7 @@ namespace BWAPI
     data->remainingLatencyFrames  = Broodwar->getRemainingLatencyFrames();
     data->remainingLatencyTime    = Broodwar->getRemainingLatencyTime();
     data->elapsedTime             = Broodwar->elapsedTime();
-    data->countdownTimer          = Broodwar->countdownTimer();
+    data->countdownTimer = 0; // Broodwar->countdownTimer();
     data->averageFPS              = Broodwar->getAverageFPS();
     data->mouseX                  = Broodwar->getMousePosition().x;
     data->mouseY                  = Broodwar->getMousePosition().y;
@@ -562,8 +745,27 @@ namespace BWAPI
   }
 
   void Server::callOnFrame()
-  { 
+  {
+    char code = 2;
+    auto success = write(syncSocket, &code, 1) == 1;
+    if (!success)
+    {
+      close(syncSocket);
+      connected = false;
+      return;
+    }
+    while (code != 1)
+    {
+      auto success = read(syncSocket, &code, 1) == 1;
+      if (!success)
+      {
+        close(syncSocket);
+        connected = false;
+        return;
+      }
+    }
   }
+
   void Server::processCommands()
   {
     for(int i = 0; i < data->commandCount; ++i)
@@ -662,4 +864,4 @@ namespace BWAPI
     } // if isInGame
   }
 
-}
+} // namespace BWAPI

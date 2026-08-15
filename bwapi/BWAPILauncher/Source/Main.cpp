@@ -482,6 +482,16 @@ int main() {
       BWAPI::BroodwarImpl_handle h(gameOwner.getGame());
 
       do {
+        // sb: with OPENBW_CLIENT_SUPPORT=1 the launcher waits pre-game for a BWAPI client to
+        // attach over the POSIX shm transport (basil linux-client-support port). Default OFF:
+        // the loop is skipped entirely and module games are byte-identical (rule 9).
+        const char* sbClientEnv = std::getenv("OPENBW_CLIENT_SUPPORT");
+        if (sbClientEnv && sbClientEnv[0] == '1') {
+          // Accept the client without pumping processEvents (see Server::waitForClient).
+          // No update() here: the first frame must reach the client only once the game is
+          // live, or its Game.init reads pre-match state.
+          h->server.waitForClient();
+        }
         h->autoMenuManager.startGame();
 
         while (!h->bwgame.gameOver()) {

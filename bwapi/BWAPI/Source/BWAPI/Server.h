@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <string>
 
 namespace BWAPI
 {
@@ -26,6 +27,7 @@ namespace BWAPI
     Server(Server &&other) = delete;
     
     void      update();
+    void      waitForClient();   // sb: pre-game client accept (OPENBW_CLIENT_SUPPORT=1)
     bool      isConnected() const;
     int       addEvent(const BWAPI::Event& e);
     int       addString(const char* text);
@@ -50,10 +52,16 @@ namespace BWAPI
     void processCommands();
     void setWaitForResponse(bool wait);
 
+    int syncSocket = -1;
+    std::string shareName;
+    int mapFileHandle = 0;
+    int gameTableFileHandle = 0;
+
     GameTable* gameTable = nullptr;
     int gameTableIndex = -1;
     bool connected = false;
     bool localOnly = false;
+    bool clientSupport = false;   // sb: OPENBW_CLIENT_SUPPORT=1 opt-in (default off)
 
     std::vector<Force> forceVector;
     std::unordered_map<Force, int> forceLookup;
@@ -65,4 +73,4 @@ namespace BWAPI
     std::unordered_map<Unit, int> unitLookup;
 
   };
-}
+} // namespace BWAPI
