@@ -73,7 +73,7 @@ namespace BWAPI
   //------------------------------------------ Compute Unit Existence ----------------------------------------
   void GameImpl::computeUnitExistence()
   {
-    // sb-perf: SBBOT_MIRROR_SEQ=1 defers the per-unit fingerprint build (updateInternalData) out of
+    // sb-perf: GLITCHCORE_MIRROR_SEQ=1 defers the per-unit fingerprint build (updateInternalData) out of
     // the engine-node-list pointer-chase below into an engine-INDEX-order pass at the end of this
     // function, so its ~15-cache-line scattered unit_t reads stream (piecewise-contiguous
     // object_container) for the HW prefetcher. Read once; default off (kill-switch, rule 14).
@@ -160,7 +160,7 @@ namespace BWAPI
       }
     }
 
-    // sb-perf mirror sequential pass (SBBOT_MIRROR_SEQ): build every alive unit's fingerprint in
+    // sb-perf mirror sequential pass (GLITCHCORE_MIRROR_SEQ): build every alive unit's fingerprint in
     // engine-INDEX order rather than node-list order, so its scattered unit_t reads stream in
     // storage order (piecewise-contiguous object_container) for the HW prefetcher. Same SET as the
     // three loops above, and updateInternalData is order-independent (own mirror out; frame-constant

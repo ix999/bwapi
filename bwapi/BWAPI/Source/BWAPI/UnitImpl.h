@@ -328,17 +328,17 @@ namespace BWAPI
       std::unique_ptr<UnitData> mirrorVerifySnap;
       bool mirrorSkipEligible(BW::Unit& o) const;
       static bool mirrorVerifyMode();
-      // SBBOT_MIRROR_SEQ (read once): run the fingerprint build in engine-index order.
+      // GLITCHCORE_MIRROR_SEQ (read once): run the fingerprint build in engine-index order.
       static bool mirrorSeqEnabled();
-      // SBBOT_MIRROR_SNAP_RELOC (read once): read/write the dirty-skip snapshot from the flat
+      // GLITCHCORE_MIRROR_SNAP_RELOC (read once): read/write the dirty-skip snapshot from the flat
       // GameImpl::unitMirrorSnap store instead of the embedded member above. Independent of SEQ so it
       // can be A/B'd on its own; it only pays combined with SEQ=1 (the index-order pass streams the
       // relocated cold operand). Default off -> embedded member -> byte-identical to baseline.
       static bool mirrorSnapRelocEnabled();
-      // SBBOT_MIRROR_PREFETCH (read once): software-prefetch the memcmp's cold operand (this unit's
+      // GLITCHCORE_MIRROR_PREFETCH (read once): software-prefetch the memcmp's cold operand (this unit's
       // snapshot) at the top of the skip check, overlapping the fetch with the fingerprint build.
       // Pure droppable hint -> byte-identical on/off. Latency lever for a latency-bound box (the
-      // dev Xeon); inert (kill-switch) at 0. Hint tier via SBBOT_MIRROR_PREFETCH_HINT (t0|t1|t2|nta).
+      // dev Xeon); inert (kill-switch) at 0. Hint tier via GLITCHCORE_MIRROR_PREFETCH_HINT (t0|t1|t2|nta).
       static bool mirrorPrefetchEnabled();
       static int  mirrorPrefetchHint();
 

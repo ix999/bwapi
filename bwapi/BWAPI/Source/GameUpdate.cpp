@@ -473,7 +473,7 @@ void GameImpl::initializeAIModule()
       // Dual-host: the second in-process bot loads its own module image (a DISTINCT file
       // copy — dlopen of the same path would return one shared image and shared bot statics).
       if (this->bwgame.viewer_index == 1) {
-        const char* p2 = std::getenv("SBBOT_P2_AI");
+        const char* p2 = std::getenv("GLITCHCORE_P2_AI");
         if (p2 && *p2) dll = p2;
       }
 

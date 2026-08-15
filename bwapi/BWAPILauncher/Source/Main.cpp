@@ -27,8 +27,8 @@
 // process against ONE simulation — no lockstep peer, no IPC, no duplicate sim. Each bot runs
 // on its own dispatch thread (thread_local BroodwarImpl + Broodwar bind per thread); the two
 // updates are barriered strictly sequentially each frame, then the main thread steps the sim
-// once. Env: BWAPI_CONFIG_AI__AI + BWAPI_CONFIG_AUTO_MENU__RACE for bot 0; SBBOT_P2_AI (a
-// DISTINCT FILE COPY of the module) + SBBOT_P2_RACE for bot 1.
+// once. Env: BWAPI_CONFIG_AI__AI + BWAPI_CONFIG_AUTO_MENU__RACE for bot 0; GLITCHCORE_P2_AI (a
+// DISTINCT FILE COPY of the module) + GLITCHCORE_P2_RACE for bot 1.
 
 namespace BWAPI { void mirrorShareNextGame(); }   // UnitUpdate.cpp — serial-K per-game reset
 
@@ -100,9 +100,9 @@ void lane_signal_go(bot_lane_t& lane, bool quit = false, bool finish = false) {
 // ---- Per-viewer policy channel (per-side P1_POLICY/P2_POLICY in one process, NO bot changes) ----
 //
 // Two-process games apply P1_POLICY to process 1 and P2_POLICY to process 2 — each a space-separated
-// list of KEY=VALUE env assignments (e.g. "SBBOT_GENOME=/path SBBOT_QA_FORCE_OPERATION=nuke"). In
-// dual-host both bots share one process env, so the runner passes them as SBBOT_P1_POLICY /
-// SBBOT_P2_POLICY and this applies the ACTIVE viewer's set to the real env immediately before that
+// list of KEY=VALUE env assignments (e.g. "GLITCHCORE_GENOME=/path GLITCHCORE_QA_FORCE_OPERATION=nuke"). In
+// dual-host both bots share one process env, so the runner passes them as GLITCHCORE_P1_POLICY /
+// GLITCHCORE_P2_POLICY and this applies the ACTIVE viewer's set to the real env immediately before that
 // viewer's dispatch. Because per-frame dispatch is strictly sequential (bot 0 completes before bot 1
 // starts) and each viewer is a distinct module image with its own statics, every getenv the bot
 // makes during its dispatch returns its own value, and lazily-cached `static const … = getenv(…)`
@@ -122,7 +122,7 @@ struct ViewerPolicies {
 
 ViewerPolicies parse_viewer_policies() {
   ViewerPolicies vp;
-  const char* names[2] = { "SBBOT_P1_POLICY", "SBBOT_P2_POLICY" };
+  const char* names[2] = { "GLITCHCORE_P1_POLICY", "GLITCHCORE_P2_POLICY" };
   for (int v = 0; v < 2; ++v) {
     const char* raw = std::getenv(names[v]);
     if (!raw || !*raw) continue;
@@ -176,10 +176,10 @@ int run_one_dual_game() {
 
       const char* map = std::getenv("BWAPI_CONFIG_AUTO_MENU__MAP");
       if (!map || !*map) { printf("dual: BWAPI_CONFIG_AUTO_MENU__MAP not set\n"); return 1; }
-      const char* p2ai = std::getenv("SBBOT_P2_AI");
-      if (!p2ai || !*p2ai) { printf("dual: SBBOT_P2_AI not set (needs a distinct file copy)\n"); return 1; }
+      const char* p2ai = std::getenv("GLITCHCORE_P2_AI");
+      if (!p2ai || !*p2ai) { printf("dual: GLITCHCORE_P2_AI not set (needs a distinct file copy)\n"); return 1; }
       int race1 = race_from_env("BWAPI_CONFIG_AUTO_MENU__RACE", 1);
-      int race2 = race_from_env("SBBOT_P2_RACE", 1);
+      int race2 = race_from_env("GLITCHCORE_P2_RACE", 1);
 
       g0.setMapFileName(map);
       g0.setGameTypeMelee();
@@ -284,10 +284,10 @@ int run_one_dual_game() {
       }
 
       // Belt-and-braces cap (the vs.sh watchdog's role, in-process): bots END themselves at
-      // SBBOT_SMOKE_FRAMES; if either viewer's game-over signal fails to propagate, stop a
+      // GLITCHCORE_SMOKE_FRAMES; if either viewer's game-over signal fails to propagate, stop a
       // little after the cap instead of spinning forever.
       long frame_cap = 1u << 30;
-      if (const char* fc = std::getenv("SBBOT_SMOKE_FRAMES")) {
+      if (const char* fc = std::getenv("GLITCHCORE_SMOKE_FRAMES")) {
         long v = std::atol(fc);
         if (v > 0) frame_cap = v + 2000;
       }
@@ -388,11 +388,11 @@ static bool play_spec_line(const std::string& line, int& played, int& failed) {
   if (f[0].empty()) { printf("serial: bad spec line: %s\n", line.c_str()); ++failed; return false; }
   ::setenv("BWAPI_CONFIG_AUTO_MENU__MAP", f[0].c_str(), 1);
   ::setenv("BWAPI_CONFIG_AUTO_MENU__RACE", f[1].c_str(), 1);
-  ::setenv("SBBOT_P2_RACE", f[2].c_str(), 1);
+  ::setenv("GLITCHCORE_P2_RACE", f[2].c_str(), 1);
   ::setenv("OPENBW_GAME_SEED", f[3].c_str(), 1);
-  ::setenv("SBBOT_SMOKE_FRAMES", f[4].c_str(), 1);
+  ::setenv("GLITCHCORE_SMOKE_FRAMES", f[4].c_str(), 1);
   ::setenv("BWAPI_CONFIG_AI__AI", f[5].c_str(), 1);
-  ::setenv("SBBOT_P2_AI", f[6].c_str(), 1);
+  ::setenv("GLITCHCORE_P2_AI", f[6].c_str(), 1);
   if (!std::freopen(f[7].c_str(), "w", stdout)) { ++failed; return false; }
   BWAPI::mirrorShareNextGame();
   // Per-game wall on stderr (stdout is the game log — digests untouched): the worker-lifetime
