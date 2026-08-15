@@ -73,7 +73,11 @@ namespace BWAPI
   ///
   /// @note This value is purposely high to avoid collisions with revision values.
   /// @since 4.2.0
-  const int CLIENT_VERSION = 10002;
+  // sb: fork-specific client protocol number. This fork's GameData/UnitData shared-memory
+  // layout is NOT upstream 4.4 (sb-perf UnitData cache-line reorder), so it deliberately
+  // does not claim 10003; a paired client must be generated against these headers
+  // (docs/design/PURPLEWAVE_BRIDGE.md). Stock clients are refused loudly by version.
+  const int CLIENT_VERSION = 20001;
 }
 
 #endif
