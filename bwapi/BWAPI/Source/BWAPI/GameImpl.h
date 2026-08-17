@@ -347,7 +347,7 @@ namespace BWAPI
       bool startedClient;
 
       std::array<UnitImpl*, BW::UNIT_ARRAY_MAX_LENGTH> unitArray;
-      // sb-perf: relocated dirty-skip fingerprint snapshots, used ONLY when GLITCHCORE_MIRROR_SEQ is on.
+      // sb-perf: relocated dirty-skip fingerprint snapshots, used ONLY when GLITCH_MIRROR_SEQ is on.
       // Flat + index-ordered so that, under the SEQ index-order fingerprint pass, the memcmp cold
       // operand streams (the embedded UnitImpl::mirrorSnap is used when SEQ is off, keeping the
       // default path byte-identical to baseline). Indexed by UnitImpl::getIndex().

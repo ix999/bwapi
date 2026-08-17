@@ -158,7 +158,7 @@ namespace BWAPI
   bool UnitImpl::mirrorSeqEnabled()
   {
     static const bool seq = [] {
-      const char* v = std::getenv("GLITCHCORE_MIRROR_SEQ");
+      const char* v = std::getenv("GLITCH_MIRROR_SEQ");
       return v && *v && std::strcmp(v, "0") != 0;
     }();
     return seq;
@@ -167,7 +167,7 @@ namespace BWAPI
   bool UnitImpl::mirrorSnapRelocEnabled()
   {
     static const bool reloc = [] {
-      const char* v = std::getenv("GLITCHCORE_MIRROR_SNAP_RELOC");
+      const char* v = std::getenv("GLITCH_MIRROR_SNAP_RELOC");
       return v && *v && std::strcmp(v, "0") != 0;
     }();
     return reloc;
@@ -176,7 +176,7 @@ namespace BWAPI
   bool UnitImpl::mirrorPrefetchEnabled()
   {
     static const bool pf = [] {
-      const char* v = std::getenv("GLITCHCORE_MIRROR_PREFETCH");
+      const char* v = std::getenv("GLITCH_MIRROR_PREFETCH");
       return v && *v && std::strcmp(v, "0") != 0;
     }();
     return pf;
@@ -186,7 +186,7 @@ namespace BWAPI
   {
     // __builtin_prefetch locality arg: 3=T0 (all caches), 2=T1, 1=T2, 0=NTA (non-temporal).
     static const int hint = [] {
-      const char* v = std::getenv("GLITCHCORE_MIRROR_PREFETCH_HINT");
+      const char* v = std::getenv("GLITCH_MIRROR_PREFETCH_HINT");
       if (v) {
         if (!std::strcmp(v, "nta")) return 0;
         if (!std::strcmp(v, "t2"))  return 1;
@@ -326,7 +326,7 @@ namespace BWAPI
       // SNAP_RELOC on: read/write the relocated contiguous snapshot (streams under the SEQ
       // index-order pass); off: the embedded member (baseline). Same bytes either way -> byte-exact.
       BW::MirrorFingerprint& snap = mirrorSnapRelocEnabled() ? game.unitMirrorSnap[getIndex()] : mirrorSnap;
-      // Software prefetch (latency lever, GLITCHCORE_MIRROR_PREFETCH): `snap` is the memcmp's cold
+      // Software prefetch (latency lever, GLITCH_MIRROR_PREFETCH): `snap` is the memcmp's cold
       // second operand. Issue its load now so it streams in while the fingerprint build below
       // stalls on scattered unit_t reads -> warm by the compare. __builtin_prefetch is a pure
       // droppable hint (writes no register/flag/memory, faults on nothing), so the mirror output
