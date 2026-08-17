@@ -15,7 +15,7 @@
 //   * Byte-exact. Only memory PROVENANCE changes. A std::unordered_set's iteration order is a function
 //     of the hash (StableUnitHash), the bucket count (rehash policy) and per-bucket insertion order —
 //     none depend on the address the allocator returns — so the game/command stream is identical.
-//     The kill-switch below is the differential-test knob (rule 14): GLITCH_MIRROR_POOL=0 delegates
+//     The kill-switch below is the differential-test knob (rule 14): BOT_MIRROR_POOL=0 delegates
 //     every allocate/deallocate to ::operator new/delete (exactly std::allocator), and pool-on must
 //     produce byte-identical digests to pool-off.
 //   * Thread-local. The two dual-host lanes each get their own pool; they never share pool state, so
@@ -40,7 +40,7 @@ class MirrorPool {
   const bool enabled_;
 
   static bool read_enabled() {
-    const char* v = std::getenv("GLITCH_MIRROR_POOL");
+    const char* v = std::getenv("BOT_MIRROR_POOL");
     return !(v && v[0] == '0');
   }
   static std::size_t round_up(std::size_t n) { return ((n + kAlign - 1) / kAlign) * kAlign; }

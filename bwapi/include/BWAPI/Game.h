@@ -928,7 +928,7 @@ namespace BWAPI
     /// @note Specifying a value of 0 will not guarantee that logical frames are executed as fast
     /// as possible. If that is the intention, use this in combination with #setFrameSkip.
     ///
-    /// @bug Changing this value will cause the execution of @UMS scenario triggers to glitch.
+    /// @bug Changing this value will cause the execution of @UMS scenario triggers to bot.
     /// This will only happen in campaign maps and custom scenarios (non-melee).
     ///
     /// <param name="speed">
