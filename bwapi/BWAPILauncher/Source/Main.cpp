@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <cctype>
 #include <string>
 #include <memory>
@@ -58,8 +59,14 @@ int env_int(const char* name, int fallback) {
 // pylons, and (SB_ECON_LAB_GAS!=0, default on) places ONE Assimilator on the nearest geyser for
 // realistic mineral-line geometry — the bot is expected to mine MINERALS ONLY (no gas rally; verify
 // with worker_census.py). Swap the mining bot (Mojo vs Stardust) for an identical-spawn head-to-head.
-// Player = SB_ECON_LAB_PLAYER (default = the local slot = bot0 = P1). Idempotent: only tops up to N.
-void econ_lab_spawn(BW::Game g) {
+// Player = SB_ECON_LAB_PLAYER (default = `defaultOwner`, which the caller sets per launch mode: the
+// local slot in dual-host's one sim, but a FIXED index (0) in two-process where each process has its
+// OWN local slot — both processes must spawn for the SAME player index or the two sims desync).
+// Idempotent: only tops up to N.
+// `author` = does THIS process issue the createUnit calls. In two-process the creates propagate to
+// both synced sims, so exactly ONE client authors (or every unit spawns twice); both clients still
+// pump identically to stay in lockstep. Dual-host is one sim => author=true.
+void econ_lab_spawn(BW::Game g, int defaultOwner, bool author) {
   const int wantWorkers = env_int("SB_ECON_LAB_WORKERS", 0);
   if (wantWorkers <= 0) return;
   constexpr int kNexus = BWAPI::UnitTypes::Enum::Protoss_Nexus;
@@ -67,11 +74,32 @@ void econ_lab_spawn(BW::Game g) {
   constexpr int kPylon = BWAPI::UnitTypes::Enum::Protoss_Pylon;
   constexpr int kAssimilator = BWAPI::UnitTypes::Enum::Protoss_Assimilator;
   constexpr int kGeyser = BWAPI::UnitTypes::Enum::Resource_Vespene_Geyser;
-  const int owner = env_int("SB_ECON_LAB_PLAYER", g.g_LocalHumanID());
   const int pylons = env_int("SB_ECON_LAB_PYLONS", 3);
   const bool gas = env_int("SB_ECON_LAB_GAS", 1) != 0;
+  // Select the mining player. Prefer SB_ECON_LAB_NAME: both processes see IDENTICAL player names, so
+  // a name match picks the SAME slot in both — the seed-dependent seat is invisible to a bare index,
+  // which is what desynced the naive two-process spawn. Fall back to SB_ECON_LAB_PLAYER/defaultOwner.
+  int owner = env_int("SB_ECON_LAB_PLAYER", defaultOwner);
+  const char* wantName = std::getenv("SB_ECON_LAB_NAME");
+  if (wantName && *wantName)
+    for (int o = 0; o < 8; ++o) {
+      const char* nm = g.getPlayer(o).szName();
+      if (nm && std::strcmp(nm, wantName) == 0) { owner = o; break; }
+    }
+  // Pump until the mining player's Nexus is placed (two-process melee units are not ready the instant
+  // startGame returns). Deterministic count in both processes => the two sims stay in lockstep.
+  auto findNexus = [&]() -> BW::Position {
+    for (size_t i = 0; i < 1700; ++i) {
+      BW::Unit u = g.getUnit(i);
+      if (u && u.hasSprite() && u.playerID() == owner && u.unitType() == kNexus) return u.position();
+    }
+    return BW::Position{-1, -1};
+  };
+  BW::Position nexus = findNexus();
+  for (int pump = 0; nexus.x < 0 && pump < 90; ++pump) { g.nextFrame(); nexus = findNexus(); }
   const BW::Position sp = g.getPlayer(owner).startPosition();
-  BW::Position nexus = sp, geyser{-1, -1};
+  if (nexus.x < 0) nexus = sp;
+  BW::Position geyser{-1, -1};
   long bestG = 1LL << 60;
   int haveProbes = 0;
   for (size_t i = 0; i < 1700; ++i) {
@@ -79,7 +107,6 @@ void econ_lab_spawn(BW::Game g) {
     if (!u || !u.hasSprite()) continue;
     const int t = u.unitType();
     const BW::Position p = u.position();
-    if (u.playerID() == owner && t == kNexus) nexus = p;
     if (u.playerID() == owner && t == kProbe) ++haveProbes;
     if (t == kGeyser) {
       const long d = (long)(p.x - sp.x) * (p.x - sp.x) + (long)(p.y - sp.y) * (p.y - sp.y);
@@ -89,19 +116,22 @@ void econ_lab_spawn(BW::Game g) {
   // createUnit returns a Unit whose operator bool is not yet true on the creation tick (sprite set
   // next frame), so we count ATTEMPTS, not the return — the census / work= telemetry confirms placement.
   int added = 0;
-  for (int i = haveProbes; i < wantWorkers; ++i) {
-    const int dx = ((i % 6) - 3) * 20;
-    const int dy = ((i / 6)) * 20 + 96;   // below the Nexus, toward the mineral line
-    g.createUnit(owner, kProbe, nexus.x + dx, nexus.y + dy);
-    ++added;
+  if (author) {
+    for (int i = haveProbes; i < wantWorkers; ++i) {
+      const int dx = ((i % 6) - 3) * 20;
+      const int dy = ((i / 6)) * 20 + 96;   // below the Nexus, toward the mineral line
+      g.createUnit(owner, kProbe, nexus.x + dx, nexus.y + dy);
+      ++added;
+    }
+    for (int k = 0; k < pylons; ++k)
+      g.createUnit(owner, kPylon, nexus.x - 128 - k * 72, nexus.y - 96);
+    if (gas && geyser.x >= 0) g.createUnit(owner, kAssimilator, geyser.x, geyser.y);
   }
-  for (int k = 0; k < pylons; ++k)
-    g.createUnit(owner, kPylon, nexus.x - 128 - k * 72, nexus.y - 96);
-  const bool gasPlaced = gas && geyser.x >= 0;
-  if (gasPlaced) g.createUnit(owner, kAssimilator, geyser.x, geyser.y);
   g.disableTriggers();   // no melee end condition — run the full frame cap
-  std::printf("ECON-LAB spawn owner=%d nexus=%d,%d have=%d want=%d added=%d pylons=%d gas=%d geyser=%d,%d\n",
-      owner, nexus.x, nexus.y, haveProbes, wantWorkers, added, pylons, (int)gasPlaced, geyser.x, geyser.y);
+  const char* onm = g.getPlayer(owner).szName();
+  std::printf("ECON-LAB spawn author=%d owner=%d name=%s nexus=%d,%d have=%d want=%d added=%d pylons=%d gas=%d geyser=%d,%d\n",
+      (int)author, owner, onm ? onm : "?", nexus.x, nexus.y, haveProbes, wantWorkers, added, pylons,
+      (int)(gas && geyser.x >= 0), geyser.x, geyser.y);
   std::fflush(stdout);
 }
 
@@ -272,10 +302,8 @@ int run_one_dual_game() {
       // ECON-LAB resources test scenario (SB_ECON_LAB_WORKERS): pump a few frames so the melee start
       // units (Nexus + probes + resources) are placed, then spawn the fixed mining substrate into the
       // ONE shared dual-host sim before the bots' first dispatch. Inert unless the env is set.
-      if (env_int("SB_ECON_LAB_WORKERS", 0) > 0) {
-        for (int i = 0; i < 6; ++i) g0.nextFrame();
-        econ_lab_spawn(g0);
-      }
+      if (env_int("SB_ECON_LAB_WORKERS", 0) > 0)
+        econ_lab_spawn(g0, g0.g_LocalHumanID(), true);   // dual-host: one sim, this process authors
 
       // Per-side policy (P1_POLICY/P2_POLICY, applied per viewer before each dispatch — no bot change).
       const ViewerPolicies viewer_policies = parse_viewer_policies();
@@ -561,6 +589,18 @@ int main() {
           h->server.waitForClient();
         }
         h->autoMenuManager.startGame();
+
+        // ECON-LAB two-process spawn (SB_ECON_LAB_WORKERS): BOTH processes run this identically —
+        // same pump count, same fixed player index (SB_ECON_LAB_PLAYER, default 0), same
+        // deterministic positions — so the two synced sims create identical units and stay in
+        // lockstep (like the melee start units). Inert unless the env is set. Works for a bot
+        // (e.g. Stardust) whose own BWAPI ABI does not load in the dual-host launcher.
+        if (env_int("SB_ECON_LAB_WORKERS", 0) > 0) {
+          // Two-process: SB_ECON_LAB_NAME picks the slot (same in both sims); only client 1 AUTHORS
+          // the creates (they propagate to both sims), both pump in lockstep inside econ_lab_spawn.
+          const bool author = env_int("OPENBW_CLIENT_INDEX", 1) == 1;
+          econ_lab_spawn(h->bwgame, 0, author);
+        }
 
         while (!h->bwgame.gameOver()) {
           h->update();
