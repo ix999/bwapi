@@ -1,6 +1,7 @@
 
 #include "BWAPI/GameImpl.h"
 #include "BW/BWData.h"
+#include <BWAPI/UnitType.h>   // ECON-LAB scenario spawn unit-type enum (SB_ECON_LAB_*)
 
 #include <cstdio>
 #include <cstdlib>
@@ -43,6 +44,65 @@ int race_from_env(const char* name, int fallback) {
   if (s == "Terran") return 1;
   if (s == "Protoss") return 2;
   return fallback;
+}
+
+int env_int(const char* name, int fallback) {
+  const char* v = std::getenv(name);
+  return (v && *v) ? std::atoi(v) : fallback;
+}
+
+// ECON-LAB permanent resources test scenario (SB_ECON_LAB_WORKERS=N; INERT unless set, so default
+// games stay byte-identical, rule 9). Spawned into the LIVE dual-host sim (one shared state, no
+// two-process desync) so the mining bot acts ONLY through the real BWAPI command path at true LF3
+// (rule 38). Keeps the melee Nexus + minerals; brings the mining player up to N probes, lays a few
+// pylons, and (SB_ECON_LAB_GAS!=0, default on) places ONE Assimilator on the nearest geyser for
+// realistic mineral-line geometry — the bot is expected to mine MINERALS ONLY (no gas rally; verify
+// with worker_census.py). Swap the mining bot (Mojo vs Stardust) for an identical-spawn head-to-head.
+// Player = SB_ECON_LAB_PLAYER (default = the local slot = bot0 = P1). Idempotent: only tops up to N.
+void econ_lab_spawn(BW::Game g) {
+  const int wantWorkers = env_int("SB_ECON_LAB_WORKERS", 0);
+  if (wantWorkers <= 0) return;
+  constexpr int kNexus = BWAPI::UnitTypes::Enum::Protoss_Nexus;
+  constexpr int kProbe = BWAPI::UnitTypes::Enum::Protoss_Probe;
+  constexpr int kPylon = BWAPI::UnitTypes::Enum::Protoss_Pylon;
+  constexpr int kAssimilator = BWAPI::UnitTypes::Enum::Protoss_Assimilator;
+  constexpr int kGeyser = BWAPI::UnitTypes::Enum::Resource_Vespene_Geyser;
+  const int owner = env_int("SB_ECON_LAB_PLAYER", g.g_LocalHumanID());
+  const int pylons = env_int("SB_ECON_LAB_PYLONS", 3);
+  const bool gas = env_int("SB_ECON_LAB_GAS", 1) != 0;
+  const BW::Position sp = g.getPlayer(owner).startPosition();
+  BW::Position nexus = sp, geyser{-1, -1};
+  long bestG = 1LL << 60;
+  int haveProbes = 0;
+  for (size_t i = 0; i < 1700; ++i) {
+    BW::Unit u = g.getUnit(i);
+    if (!u || !u.hasSprite()) continue;
+    const int t = u.unitType();
+    const BW::Position p = u.position();
+    if (u.playerID() == owner && t == kNexus) nexus = p;
+    if (u.playerID() == owner && t == kProbe) ++haveProbes;
+    if (t == kGeyser) {
+      const long d = (long)(p.x - sp.x) * (p.x - sp.x) + (long)(p.y - sp.y) * (p.y - sp.y);
+      if (d < bestG) { bestG = d; geyser = p; }
+    }
+  }
+  // createUnit returns a Unit whose operator bool is not yet true on the creation tick (sprite set
+  // next frame), so we count ATTEMPTS, not the return — the census / work= telemetry confirms placement.
+  int added = 0;
+  for (int i = haveProbes; i < wantWorkers; ++i) {
+    const int dx = ((i % 6) - 3) * 20;
+    const int dy = ((i / 6)) * 20 + 96;   // below the Nexus, toward the mineral line
+    g.createUnit(owner, kProbe, nexus.x + dx, nexus.y + dy);
+    ++added;
+  }
+  for (int k = 0; k < pylons; ++k)
+    g.createUnit(owner, kPylon, nexus.x - 128 - k * 72, nexus.y - 96);
+  const bool gasPlaced = gas && geyser.x >= 0;
+  if (gasPlaced) g.createUnit(owner, kAssimilator, geyser.x, geyser.y);
+  g.disableTriggers();   // no melee end condition — run the full frame cap
+  std::printf("ECON-LAB spawn owner=%d nexus=%d,%d have=%d want=%d added=%d pylons=%d gas=%d geyser=%d,%d\n",
+      owner, nexus.x, nexus.y, haveProbes, wantWorkers, added, pylons, (int)gasPlaced, geyser.x, geyser.y);
+  std::fflush(stdout);
 }
 
 struct bot_lane_t {
@@ -208,6 +268,14 @@ int run_one_dual_game() {
         }
         if (race1_sent && race2_sent) g0.startGame();
       });
+
+      // ECON-LAB resources test scenario (SB_ECON_LAB_WORKERS): pump a few frames so the melee start
+      // units (Nexus + probes + resources) are placed, then spawn the fixed mining substrate into the
+      // ONE shared dual-host sim before the bots' first dispatch. Inert unless the env is set.
+      if (env_int("SB_ECON_LAB_WORKERS", 0) > 0) {
+        for (int i = 0; i < 6; ++i) g0.nextFrame();
+        econ_lab_spawn(g0);
+      }
 
       // Per-side policy (P1_POLICY/P2_POLICY, applied per viewer before each dispatch — no bot change).
       const ViewerPolicies viewer_policies = parse_viewer_policies();
