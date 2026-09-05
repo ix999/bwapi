@@ -378,6 +378,50 @@ struct game_vars {
 
 void g_global_init_if_necessary(const bwgame::global_state& global_st, std::string mpq_path);
 
+// ─── seeded games on UNMODIFIED OpenBW (rule 9; docs/design/OPENBW_PURITY.md P5 Stage A) ──────────────
+// The engine tree is pure upstream; the two seams that make a game byte-reproducible live here, in the
+// backend we own, and are inert when the env is unset (upstream's own clock-seeded uid and random seed):
+//   OPENBW_GAME_SEED     the seed the start-game countdown applies. Upstream's host broadcasts a random seed
+//                        and sync.h applies sync_st.start_game_seed when the ten-frame countdown expires; every
+//                        process overwrites that field with the env seed on each pump iteration while the
+//                        countdown runs, so all sides start from the same seed.
+//   OPENBW_CLIENT_INDEX  this process's client index; with the seed it fixes the local client's uid (upstream
+//                        derives it from clocks), which decides LOCAL_AUTO seating and enters the LCG state
+//                        (start_game: seed ^ crc32 of every uid). The formula is the sb-perf fork's, so seeded
+//                        games keep their reference shas across the swap.
+static bool sb_env_u32(const char* name, uint32_t& value) {
+  const char* text = std::getenv(name);
+  if (!text || !*text) return false;
+  char* end = nullptr;
+  const unsigned long parsed = std::strtoul(text, &end, 0);
+  if (!end || *end != '\0') return false;
+  value = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+static bwgame::sync_state::uid_t sb_seeded_uid(uint32_t seed, uint32_t client_index) {
+  bwgame::sync_state::uid_t r;
+  uint32_t state = seed ^ (0x9e3779b9u * (client_index + 1u));
+  for (size_t i = 0; i != r.vals.size(); ++i) {
+    state = state * 1664525u + 1013904223u + static_cast<uint32_t>(i);
+    r.vals[i] = state ^ (0x85ebca6bu * static_cast<uint32_t>(i + 1u));
+  }
+  return r;
+}
+
+// After the sync state is rebuilt and before it greets anyone: the seeded local uid.
+static void sb_seed_local_uid(bwgame::sync_state& s) {
+  uint32_t seed = 0, index = 0;
+  if (sb_env_u32("OPENBW_GAME_SEED", seed) && sb_env_u32("OPENBW_CLIENT_INDEX", index))
+    s.local_client->uid = sb_seeded_uid(seed, index);
+}
+
+// Every pump iteration while the start countdown runs: the seed the countdown will apply.
+static void sb_hold_game_seed(bwgame::sync_state& s) {
+  uint32_t seed = 0;
+  if (s.game_starting_countdown && sb_env_u32("OPENBW_GAME_SEED", seed)) s.start_game_seed = seed;
+}
+
 struct game_setup_helper_t {
   bwgame::state& st;
   game_vars& vars;
@@ -459,6 +503,7 @@ struct game_setup_helper_t {
       sync_funcs.action_st = bwgame::action_state();
       sync_funcs.sync_st = bwgame::sync_state();
       sync_funcs.sync_st.local_client->name = std::move(name);
+      sb_seed_local_uid(sync_funcs.sync_st);
       sync_funcs.sync_st.save_replay = save_replay;
       if (save_replay) *save_replay = bwgame::replay_saver_state();
       bwgame::game_load_functions load_funcs(st);
@@ -482,6 +527,7 @@ struct game_setup_helper_t {
         sync_funcs.sync_st.setup_info = &load_funcs.setup_info;
 
         while (!sync_funcs.sync_st.game_started) {
+          sb_hold_game_seed(sync_funcs.sync_st);
           sync_funcs.sync(noop_server);
           vars.local_player_id = sync_funcs.sync_st.local_client->player_slot;
           if (vars.local_player_id != -1) {
@@ -526,6 +572,10 @@ struct game_setup_helper_t {
   // the uid a peer launched with OPENBW_CLIENT_INDEX=2 would have had, so lobby seating and
   // action-application order match the two-process reference by construction.
   void create_dual_player_game(std::function<void()> setup_function) {
+#ifndef OPENBW_SB_FORK
+    (void)setup_function;
+    bwgame::error("createDualPlayerGame needs the sb-perf OpenBW fork's sync glue (add_local_secondary_client); the pure engine plays two-process games — build with SB_OPENBW_DIR=<repo>/third_party/openbw for dual-host");
+#else
     using bwgame::error;
 
     for (auto& v : vars.viewers) v.left_game = false;
@@ -555,6 +605,7 @@ struct game_setup_helper_t {
     sync_funcs.action_st = bwgame::action_state();
     sync_funcs.sync_st = bwgame::sync_state();
     sync_funcs.sync_st.local_client->name = std::move(name);
+    sb_seed_local_uid(sync_funcs.sync_st);
     sync_funcs.sync_st.save_replay = save_replay;
     if (save_replay) *save_replay = bwgame::replay_saver_state();
 
@@ -591,6 +642,7 @@ struct game_setup_helper_t {
       sync_funcs.sync_st.setup_info = &load_funcs.setup_info;
 
       while (!sync_funcs.sync_st.game_started) {
+        sb_hold_game_seed(sync_funcs.sync_st);
         sync_funcs.sync(noop_server);
         vars.local_player_id = sync_funcs.sync_st.local_client->player_slot;
         setup_function();
@@ -631,6 +683,7 @@ struct game_setup_helper_t {
 
     vars.is_replay = false;
     vars.map_filename = filename;
+#endif
   }
 
   // Secondary-client lobby race change: the same id_set_race action a peer process's
@@ -688,6 +741,7 @@ struct game_setup_helper_t {
     sync_funcs.action_st = bwgame::action_state();
     sync_funcs.sync_st = bwgame::sync_state();
     sync_funcs.sync_st.local_client->name = std::move(name);
+    sb_seed_local_uid(sync_funcs.sync_st);
     sync_funcs.sync_st.save_replay = save_replay;
     if (save_replay) *save_replay = bwgame::replay_saver_state();
     sync_funcs.sync_st.latency = 3;
@@ -812,6 +866,7 @@ struct game_setup_helper_t {
       sync_funcs.sync_st.setup_info = &load_funcs.setup_info;
 
       while (!sync_funcs.sync_st.game_started) {
+        sb_hold_game_seed(sync_funcs.sync_st);
         sync();
         setup_function();
       }
@@ -908,10 +963,12 @@ struct game_setup_helper_t {
       // Dual-host: attribute the secondary in-process bot's commands to ITS sync client so
       // scheduling (frame N+latency, uid order) matches the two-process reference exactly.
       if (!secondary_client) bwgame::error("input_action: viewer 1 without a secondary client");
+#ifdef OPENBW_SB_FORK
       if (server_n == 0) sync_funcs.input_action_for(noop_server, secondary_client, data, size);
       else if (server_n == 1) sync_funcs.input_action_for(tcp_server, secondary_client, data, size);
       else if (server_n == 2) sync_funcs.input_action_for(local_server, secondary_client, data, size);
       else if (server_n == 3) sync_funcs.input_action_for(file_server, secondary_client, data, size);
+#endif
       return;
     }
     if (server_n == 0) sync_funcs.input_action(noop_server, data, size);
