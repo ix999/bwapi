@@ -634,13 +634,16 @@ struct game_setup_helper_t {
     // N+latency, so a different value is a different game.
     sync_funcs.sync_st.latency = 3;
 
-    // Name the local viewer "p1" to pair with the secondary "p2" below: otherwise the local
-    // viewer records no name and the replay header / in-game browser show it as "?". Cosmetic
-    // only -- a client NAME feeds neither the uid (seed material is (seed, client index)) nor the
-    // simulation, so the game stays byte-identical (gated by the seed-906 digest).
-    sync_funcs.sync_st.local_client->name = "p1";
+    // Client names: the replay header carries them, so they are what the two-process reference
+    // records — the local viewer's from setCharacterName (the runner's CHARACTER_NAME, called before
+    // creation exactly as GameImpl does for a two-process game), the secondary's from
+    // dualSetSecondaryName (the runner's BOT_P2_NAME). "p1"/"p2" only when a runner passes none
+    // (otherwise the header shows "?"). A client NAME feeds neither the uid (seed material is
+    // (seed, client index)) nor the simulation, so the game itself is unchanged either way.
+    if (sync_funcs.sync_st.local_client->name.empty()) sync_funcs.sync_st.local_client->name = "p1";
+    const std::string secondary_name = dual_secondary_name.empty() ? std::string("p2") : dual_secondary_name;
 
-    secondary_client = sb_add_local_secondary_client(sync_funcs.sync_st, "p2", 2);
+    secondary_client = sb_add_local_secondary_client(sync_funcs.sync_st, secondary_name.c_str(), 2);
 
     bwgame::game_load_functions load_funcs(st);
 
@@ -1018,6 +1021,7 @@ struct game_setup_helper_t {
 
   // Dual-host: the second in-process bot's sync client (nullptr in single mode).
   bwgame::sync_state::client_t* secondary_client = nullptr;
+  std::string dual_secondary_name;   // the secondary's player name (dualSetSecondaryName), "p2" if unset
 
   // The secondary has no peer process sending its frame counter (a peer's id_client_frame lands in recv):
   // mirror the local client's before every sync and before every action it inputs, so all_clients_in_sync
@@ -1803,6 +1807,11 @@ void Game::dualSecondaryOccupySlot(int n)
   impl->game_setup_helper.set_secondary_occupy_slot(n);
 }
 
+void Game::dualSetSecondaryName(const std::string& name)
+{
+  impl->game_setup_helper.dual_secondary_name = name;
+}
+
 void Game::createMultiPlayerGame(std::function<void()> setupFunction)
 {
   impl->game_setup_helper.create_multi_player_game(std::move(setupFunction));
@@ -1939,6 +1948,9 @@ void Game::enableCheats() const
 
 void Game::saveReplay(const std::string& filename)
 {
+  // Dual-host: viewer 0 is the recorder, as p1 is in a two-process game (its p2 never saves), so
+  // the .rep is the p1-only save byte for byte — the same frames, ending at viewer 0's own END.
+  if (viewer_index != 0 && impl->game_setup_helper.secondary_client) return;
   if (impl->sync_funcs.sync_st.save_replay) {
     bwgame::replay_saver_functions replay_saver_funcs(*impl->sync_funcs.sync_st.save_replay);
     bwgame::data_loading::file_writer<> w(filename.c_str());

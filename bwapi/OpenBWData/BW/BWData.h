@@ -268,6 +268,7 @@ struct Game {
   bool dualSecondaryUidSortsFirst() const;
   void dualLocalOccupySlot(int n);
   void dualSecondaryOccupySlot(int n);
+  void dualSetSecondaryName(const std::string& name);
   void startGame();
   void switchToSlot(int n);
   int connectedPlayerCount();

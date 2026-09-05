@@ -36,8 +36,8 @@ extern char** environ;
 // process against ONE simulation — no lockstep peer, no IPC, no duplicate sim. Each bot runs
 // on its own dispatch thread (thread_local BroodwarImpl + Broodwar bind per thread); the two
 // updates are barriered strictly sequentially each frame, then the main thread steps the sim
-// once. Env: BWAPI_CONFIG_AI__AI + BWAPI_CONFIG_AUTO_MENU__RACE for bot 0; BOT_P2_AI (a
-// DISTINCT FILE COPY of the module) + BOT_P2_RACE for bot 1.
+// once. Env: BWAPI_CONFIG_AI__AI + BWAPI_CONFIG_AUTO_MENU__RACE + BWAPI_CONFIG_AUTO_MENU__CHARACTER_NAME
+// for bot 0; BOT_P2_AI (a DISTINCT FILE COPY of the module) + BOT_P2_RACE + BOT_P2_NAME for bot 1.
 
 namespace BWAPI { void mirrorShareNextGame(); }   // UnitUpdate.cpp — serial-K per-game reset
 
@@ -322,6 +322,14 @@ int run_one_dual_game() {
       if (!p2ai || !*p2ai) { printf("dual: BOT_P2_AI not set (needs a distinct file copy)\n"); return 1; }
       int race1 = race_from_env("BWAPI_CONFIG_AUTO_MENU__RACE", 1);
       int race2 = race_from_env("BOT_P2_RACE", 1);
+      // Player names as the two-process reference records them (vs.sh passes CHARACTER_NAME to each
+      // process): the replay header carries them, so the dual .rep matches the p1-only save byte for
+      // byte. Viewer 0's goes in before creation exactly as GameImpl does; viewer 1's is the runner's
+      // BOT_P2_NAME, and its own GameImpl sees it as ITS CHARACTER_NAME through the per-viewer env.
+      const char* name1 = std::getenv("BWAPI_CONFIG_AUTO_MENU__CHARACTER_NAME");
+      const char* name2 = std::getenv("BOT_P2_NAME");
+      if (name1 && *name1) g0.setCharacterName(name1);
+      if (name2 && *name2) g0.dualSetSecondaryName(name2);
 
       g0.setMapFileName(map);
       g0.setGameTypeMelee();
@@ -362,6 +370,10 @@ int run_one_dual_game() {
       // Per-viewer env: each lane sees the base env plus its own writes only (see ViewerEnv).
       ViewerEnv viewer_env;
       viewer_env.base = snapshot_env();
+      if (name2 && *name2) {   // viewer 1's GameImpl reads its own name from the config it is given
+        viewer_env.overlay[1]["BWAPI_CONFIG_AUTO_MENU__CHARACTER_NAME"] = name2;
+        viewer_env.touched.insert("BWAPI_CONFIG_AUTO_MENU__CHARACTER_NAME");
+      }
 
       // The two bot mirrors, each owned entirely by its dispatch thread.
       bot_lane_t lanes[2];
