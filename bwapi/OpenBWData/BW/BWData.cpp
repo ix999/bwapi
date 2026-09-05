@@ -422,6 +422,31 @@ static void sb_hold_game_seed(bwgame::sync_state& s) {
   if (s.game_starting_countdown && sb_env_u32("OPENBW_GAME_SEED", seed)) s.start_game_seed = seed;
 }
 
+// ─── dual-host on UNMODIFIED OpenBW (ENGINE_OPT_DUALHOST.md; OPENBW_PURITY.md: "orchestration of two clients
+// is a harness around OpenBW, not an OpenBW change") ─────────────────────────────────────────────────────
+// The second in-process bot's sync client is plain public sync_state: a client_t in sync_st.clients carrying
+// the uid a separate process launched as OPENBW_CLIENT_INDEX=client_index would generate (so LOCAL_AUTO seating
+// and start_game's uid crc match the two-process reference), sorted into uid order as a peer's greeting would
+// be. It has no transport: its actions enter through the syncer's recv exactly as a peer's bytes do (frame
+// N+latency, uid-sorted application), and the helper mirrors its frame counter (sb_mirror_secondary_frame).
+static bwgame::sync_state::uid_t sb_uid_for_index(uint32_t client_index) {
+  uint32_t seed = 0;
+  if (sb_env_u32("OPENBW_GAME_SEED", seed)) return sb_seeded_uid(seed, client_index);
+  auto r = bwgame::sync_state::uid_t::generate();   // unseeded: upstream's clock uid, index-salted
+  r.vals[7] ^= 0x9e3779b9u * (client_index + 1u);
+  return r;
+}
+
+static bwgame::sync_state::client_t* sb_add_local_secondary_client(bwgame::sync_state& s, const char* name, uint32_t client_index) {
+  s.clients.push_back({sb_uid_for_index(client_index), true});
+  auto* c = &s.clients.back();
+  c->local_id = s.next_client_id++;
+  c->name = name;
+  c->frame = s.local_client->frame;
+  s.clients.sort([](const bwgame::sync_state::client_t& a, const bwgame::sync_state::client_t& b) { return a.uid < b.uid; });
+  return c;
+}
+
 struct game_setup_helper_t {
   bwgame::state& st;
   game_vars& vars;
@@ -572,10 +597,6 @@ struct game_setup_helper_t {
   // the uid a peer launched with OPENBW_CLIENT_INDEX=2 would have had, so lobby seating and
   // action-application order match the two-process reference by construction.
   void create_dual_player_game(std::function<void()> setup_function) {
-#ifndef OPENBW_SB_FORK
-    (void)setup_function;
-    bwgame::error("createDualPlayerGame needs the sb-perf OpenBW fork's sync glue (add_local_secondary_client); the pure engine plays two-process games — build with SB_OPENBW_DIR=<repo>/third_party/openbw for dual-host");
-#else
     using bwgame::error;
 
     for (auto& v : vars.viewers) v.left_game = false;
@@ -619,7 +640,7 @@ struct game_setup_helper_t {
     // simulation, so the game stays byte-identical (gated by the seed-906 digest).
     sync_funcs.sync_st.local_client->name = "p1";
 
-    secondary_client = sync_funcs.add_local_secondary_client("p2", 2);
+    secondary_client = sb_add_local_secondary_client(sync_funcs.sync_st, "p2", 2);
 
     bwgame::game_load_functions load_funcs(st);
 
@@ -643,7 +664,9 @@ struct game_setup_helper_t {
 
       while (!sync_funcs.sync_st.game_started) {
         sb_hold_game_seed(sync_funcs.sync_st);
+        sb_mirror_secondary_frame();
         sync_funcs.sync(noop_server);
+        sb_check_secondary_alive();
         vars.local_player_id = sync_funcs.sync_st.local_client->player_slot;
         setup_function();
       }
@@ -683,7 +706,6 @@ struct game_setup_helper_t {
 
     vars.is_replay = false;
     vars.map_filename = filename;
-#endif
   }
 
   // Secondary-client lobby race change: the same id_set_race action a peer process's
@@ -920,11 +942,13 @@ struct game_setup_helper_t {
   }
 
   void sync() {
+    sb_mirror_secondary_frame();
     if (server_n == 0) sync_funcs.sync(noop_server);
     else if (server_n == 1) sync_funcs.sync(tcp_server);
     else if (server_n == 2) sync_funcs.sync(local_server);
     else if (server_n == 3) sync_funcs.sync(file_server);
     vars.local_player_id = sync_funcs.sync_st.local_client->player_slot;
+    sb_check_secondary_alive();
   }
 
   void start_game() {
@@ -963,12 +987,11 @@ struct game_setup_helper_t {
       // Dual-host: attribute the secondary in-process bot's commands to ITS sync client so
       // scheduling (frame N+latency, uid order) matches the two-process reference exactly.
       if (!secondary_client) bwgame::error("input_action: viewer 1 without a secondary client");
-#ifdef OPENBW_SB_FORK
-      if (server_n == 0) sync_funcs.input_action_for(noop_server, secondary_client, data, size);
-      else if (server_n == 1) sync_funcs.input_action_for(tcp_server, secondary_client, data, size);
-      else if (server_n == 2) sync_funcs.input_action_for(local_server, secondary_client, data, size);
-      else if (server_n == 3) sync_funcs.input_action_for(file_server, secondary_client, data, size);
-#endif
+      sb_mirror_secondary_frame();
+      if (server_n == 0) sync_funcs.get_syncer(noop_server).recv(secondary_client, data, size);
+      else if (server_n == 1) sync_funcs.get_syncer(tcp_server).recv(secondary_client, data, size);
+      else if (server_n == 2) sync_funcs.get_syncer(local_server).recv(secondary_client, data, size);
+      else if (server_n == 3) sync_funcs.get_syncer(file_server).recv(secondary_client, data, size);
       return;
     }
     if (server_n == 0) sync_funcs.input_action(noop_server, data, size);
@@ -978,10 +1001,12 @@ struct game_setup_helper_t {
   }
 
   void next_frame() {
+    sb_mirror_secondary_frame();
     if (server_n == 0) sync_funcs.bwapi_compatible_next_frame(noop_server);
     else if (server_n == 1) sync_funcs.bwapi_compatible_next_frame(tcp_server);
     else if (server_n == 2) sync_funcs.bwapi_compatible_next_frame(local_server);
     else if (server_n == 3) sync_funcs.bwapi_compatible_next_frame(file_server);
+    sb_check_secondary_alive();
   }
 
   void leave_game(int viewer = 0) {
@@ -993,6 +1018,25 @@ struct game_setup_helper_t {
 
   // Dual-host: the second in-process bot's sync client (nullptr in single mode).
   bwgame::sync_state::client_t* secondary_client = nullptr;
+
+  // The secondary has no peer process sending its frame counter (a peer's id_client_frame lands in recv):
+  // mirror the local client's before every sync and before every action it inputs, so all_clients_in_sync
+  // sees it current and its actions schedule at the same frame+latency a peer's would. The fork mirrored
+  // inside sync_next_frame; with latency 3 the one-frame window between the two placements is invisible to
+  // the in-sync check, the only reader of a client's frame inside sync, so the game is the same.
+  void sb_mirror_secondary_frame() {
+    if (secondary_client) secondary_client->frame = sync_funcs.sync_st.local_client->frame;
+  }
+
+  // Upstream erases a non-local client whose player left (process_messages -> kill_client) where the fork
+  // unbound its slot: after every sync, forget a secondary that is gone so nothing dereferences it — that
+  // viewer's session is over. Not expected in a dual game (its viewer leaves by flag only); the guard stays.
+  void sb_check_secondary_alive() {
+    if (!secondary_client) return;
+    for (auto& c : sync_funcs.sync_st.clients) if (&c == secondary_client) return;
+    secondary_client = nullptr;
+    vars.viewers[1].left_game = true;
+  }
 
   bwgame::sync_state::client_t* client_for_viewer(int viewer) {
     if (viewer == 1 && secondary_client) return secondary_client;

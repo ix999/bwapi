@@ -24,6 +24,13 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/time.h>
+#ifdef __APPLE__
+#include <crt_externs.h>
+#define SB_ENVIRON (*_NSGetEnviron())
+#else
+extern char** environ;
+#define SB_ENVIRON environ
+#endif
 
 // ---- Dual-host mode (ENGINE_OPT_DUALHOST.md): OPENBW_DUAL_HOST=1 hosts BOTH bots in this
 // process against ONE simulation — no lockstep peer, no IPC, no duplicate sim. Each bot runs
@@ -240,6 +247,51 @@ void apply_viewer_policy(const ViewerPolicies& vp, int viewer) {
   }
 }
 
+// Per-viewer process environment. A bot PUBLISHES inputs into its process env exactly as it does alone
+// in its own process (Bot.cpp: the selected build as BOT_BUILD, the matchup policy as BOT_POLICY*), and
+// in two-process each side's process keeps its own. Here both bots share one env, so every dispatch
+// sees the base env (the launcher's, at game start) plus only that viewer's own writes: after a lane
+// runs, whatever it changed becomes its overlay; before a lane runs, the other viewer's writes are put
+// back to base and its own re-applied. Found by dual-equivalence on the pure engine (2026-09-05): the
+// mixed-race pairings diverged because viewer 1 inherited viewer 0's default build.
+struct ViewerEnv {
+  std::map<std::string, std::string> base;
+  std::array<std::map<std::string, std::string>, 2> overlay;
+  std::set<std::string> touched;
+};
+
+static std::map<std::string, std::string> snapshot_env() {
+  std::map<std::string, std::string> out;
+  for (char** e = SB_ENVIRON; e && *e; ++e) {
+    const char* eq = std::strchr(*e, '=');
+    if (!eq) continue;
+    out.emplace(std::string(*e, eq - *e), std::string(eq + 1));
+  }
+  return out;
+}
+
+static void viewer_env_enter(const ViewerEnv& ve, int viewer) {
+  for (const std::string& key : ve.touched) {
+    const auto mine = ve.overlay[viewer].find(key);
+    if (mine != ve.overlay[viewer].end()) { ::setenv(key.c_str(), mine->second.c_str(), 1); continue; }
+    const auto base = ve.base.find(key);
+    if (base != ve.base.end()) ::setenv(key.c_str(), base->second.c_str(), 1);
+    else ::unsetenv(key.c_str());
+  }
+}
+
+static void viewer_env_leave(ViewerEnv& ve, int viewer) {
+  const auto now = snapshot_env();
+  ve.overlay[viewer].clear();
+  for (const auto& kv : now) {
+    const auto base = ve.base.find(kv.first);
+    if (base == ve.base.end() || base->second != kv.second) {
+      ve.overlay[viewer][kv.first] = kv.second;
+      ve.touched.insert(kv.first);
+    }
+  }
+}
+
 void lane_wait_done(bot_lane_t& lane) {
   if (!lane_spin(lane.done)) {
     std::unique_lock<std::mutex> lock(lane.m);
@@ -307,6 +359,9 @@ int run_one_dual_game() {
 
       // Per-side policy (P1_POLICY/P2_POLICY, applied per viewer before each dispatch — no bot change).
       const ViewerPolicies viewer_policies = parse_viewer_policies();
+      // Per-viewer env: each lane sees the base env plus its own writes only (see ViewerEnv).
+      ViewerEnv viewer_env;
+      viewer_env.base = snapshot_env();
 
       // The two bot mirrors, each owned entirely by its dispatch thread.
       bot_lane_t lanes[2];
@@ -403,8 +458,10 @@ int run_one_dual_game() {
         printf("dual: viewer %d session over f=%d\n", i, frames);
         fflush(stdout);
         apply_viewer_policy(viewer_policies, i);
+        viewer_env_enter(viewer_env, i);
         lane_signal_go(lanes[i], false, true);
         lane_wait_done(lanes[i]);
+        viewer_env_leave(viewer_env, i);
         lanes[i].th.join();
       };
       while ((!lane_over[0] || !lane_over[1]) && frames < frame_cap) {
@@ -418,14 +475,18 @@ int run_one_dual_game() {
         bool modules_ok = true;
         if (!lane_over[0]) {
           apply_viewer_policy(viewer_policies, 0);
+          viewer_env_enter(viewer_env, 0);
           lane_signal_go(lanes[0]);
           lane_wait_done(lanes[0]);
+          viewer_env_leave(viewer_env, 0);
           modules_ok = modules_ok && lanes[0].module_ok;
         }
         if (!lane_over[1]) {
           apply_viewer_policy(viewer_policies, 1);
+          viewer_env_enter(viewer_env, 1);
           lane_signal_go(lanes[1]);
           lane_wait_done(lanes[1]);
+          viewer_env_leave(viewer_env, 1);
           modules_ok = modules_ok && lanes[1].module_ok;
         }
         if (!modules_ok) {
@@ -445,8 +506,11 @@ int run_one_dual_game() {
       // Only lanes that never latched (frame-cap or module-failure exits) remain running.
       for (int i = 0; i != 2; ++i) {
         if (lane_over[i]) continue;
+        apply_viewer_policy(viewer_policies, i);
+        viewer_env_enter(viewer_env, i);
         lane_signal_go(lanes[i], true);
         lane_wait_done(lanes[i]);
+        viewer_env_leave(viewer_env, i);
         lanes[i].th.join();
       }
       printf("dual: game finished after %d frames\n", frames);
