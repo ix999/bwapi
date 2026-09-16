@@ -447,6 +447,29 @@ static bwgame::sync_state::client_t* sb_add_local_secondary_client(bwgame::sync_
   return c;
 }
 
+// Teardown drain (sb): before an asio sync server is destroyed, neutralise each connected client's
+// callbacks and close its socket, then pump the io_service so every in-flight async read/write
+// completes now (aborted) while the server's `clients` list is still alive — instead of being
+// destroyed by ~io_service AFTER `clients` has gone. That path (~io_service destroying a still-queued
+// handler) is an upstream member-order use-after-free: the handler owns an async_handle_t whose
+// destructor calls async_release() -> clients.erase() on an already-dead list. It fires at process
+// teardown on an abrupt game-end (the losing peer leaves with a sync send still queued). This runs
+// after onGameEnd/result/replay, touches no game state, and is determinism-neutral. The clean root
+// fix is an upstream reorder (declare io_service last so it is destroyed first); since the pinned
+// engine tree must stay unmodified (OPENBW-PURE, rule 9) that reorder is carried as a proposed patch
+// in docs/patches/openbw/ and this drain is the in-tree fix.
+template<typename socket_T>
+static void sb_drain_asio_sync_server(bwgame::sync_server_asio_socket<socket_T>& server) {
+  for (auto& c : server.clients) {
+    c.on_kill = {};
+    c.on_message = {};
+    try { if (c.socket.is_open()) c.socket.close(); } catch (...) {}
+  }
+  try { server.timer.cancel(); } catch (...) {}
+  // Run the now-ready (aborted) handlers to completion; bounded against a pathological re-arm.
+  for (int i = 0; i < 1000 && server.io_service.poll() > 0; ++i) {}
+}
+
 struct game_setup_helper_t {
   bwgame::state& st;
   game_vars& vars;
@@ -469,6 +492,17 @@ struct game_setup_helper_t {
 #endif
 
   int server_n = 0;
+
+  // Drain the asio sync servers before their members are destroyed (see sb_drain_asio_sync_server):
+  // prevents a teardown use-after-free when a game ends with a socket op still queued. tcp_server is
+  // always asio; local/file are asio only off-Windows (else sync_server_noop, which has no io_service).
+  ~game_setup_helper_t() {
+    sb_drain_asio_sync_server(tcp_server);
+#ifndef _WIN32
+    sb_drain_asio_sync_server(local_server);
+    sb_drain_asio_sync_server(file_server);
+#endif
+  }
 
   std::string env(std::string name, std::string def) {
     auto i = vars.override_env_var.find(name);
