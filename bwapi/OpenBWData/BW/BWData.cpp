@@ -455,9 +455,10 @@ static bwgame::sync_state::client_t* sb_add_local_secondary_client(bwgame::sync_
 // destructor calls async_release() -> clients.erase() on an already-dead list. It fires at process
 // teardown on an abrupt game-end (the losing peer leaves with a sync send still queued). This runs
 // after onGameEnd/result/replay, touches no game state, and is determinism-neutral. The clean root
-// fix is an upstream reorder (declare io_service last so it is destroyed first); since the pinned
-// engine tree must stay unmodified (OPENBW-PURE, rule 9) that reorder is carried as a proposed patch
-// in docs/patches/openbw/ and this drain is the in-tree fix.
+// fix is upstream (reorder io_service after clients + a socket-closing dtor in sync_server_asio_socket);
+// since the pinned engine tree must stay unmodified (OPENBW-PURE, rule 9) that goes upstream as a PR
+// (superproject docs/design/openbw-upstream-patches/01-teardown-segfault.patch) and this drain is the
+// in-tree fix in the owned backend.
 template<typename socket_T>
 static void sb_drain_asio_sync_server(bwgame::sync_server_asio_socket<socket_T>& server) {
   for (auto& c : server.clients) {
