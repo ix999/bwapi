@@ -844,6 +844,40 @@ namespace BWAPI
         if ( Broodwar->isInGame() )
           Broodwar->setRevealAll(v1 != 0);
         break;
+      // The lab beds' cheats (CommandType.h): applied here, before the engine advances, as the in-process calls are
+      // during onFrame; a created unit reaches the client as a new unit on the next frame.
+      case BWAPIC::CommandType::CreateUnit:
+        if (Broodwar->isInGame() && v1 >= 0 && v1 < data->stringCount)
+        {
+          int p = -1, t = -1, x = 0, y = 0;
+          if (std::sscanf(data->strings[v1], "%d %d %d %d", &p, &t, &x, &y) == 4 && getPlayer(p))
+            Broodwar->createUnit(getPlayer(p), UnitType(t), Position(x, y));
+        }
+        break;
+      case BWAPIC::CommandType::KillUnit:
+        if (Broodwar->isInGame() && v1 >= 0 && v1 < (int)unitVector.size() && unitVector[v1] && unitVector[v1]->exists())
+          Broodwar->killUnit(unitVector[v1]);
+        break;
+      case BWAPIC::CommandType::SetMinerals:
+        if (Broodwar->isInGame() && getPlayer(v1))
+          getPlayer(v1)->setMinerals(v2);
+        break;
+      case BWAPIC::CommandType::SetGas:
+        if (Broodwar->isInGame() && getPlayer(v1))
+          getPlayer(v1)->setGas(v2);
+        break;
+      case BWAPIC::CommandType::SetResearched:
+        if (Broodwar->isInGame() && getPlayer(v1))
+          getPlayer(v1)->setResearched(TechType(v2 & 0xffff), (v2 >> 16) != 0);
+        break;
+      case BWAPIC::CommandType::SetUpgradeLevel:
+        if (Broodwar->isInGame() && getPlayer(v1))
+          getPlayer(v1)->setUpgradeLevel(UpgradeType(v2 & 0xffff), v2 >> 16);
+        break;
+      case BWAPIC::CommandType::SetEnergy:
+        if (Broodwar->isInGame() && v1 >= 0 && v1 < (int)unitVector.size() && unitVector[v1] && unitVector[v1]->exists())
+          unitVector[v1]->setEnergy(v2);
+        break;
       default:
         break;
       }
