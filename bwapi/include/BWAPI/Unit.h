@@ -4,6 +4,7 @@
 #include <BWAPI/Filters.h>
 #include <BWAPI/UnaryFilter.h>
 #include <BWAPI/Interface.h>
+#include <BWAPI/ExactPosition.h>
 
 namespace BWAPI
 {
@@ -2575,6 +2576,12 @@ namespace BWAPI
     virtual void setHitPoints(int value) = 0;
     virtual void setShields(int value) = 0;
     virtual void setEnergy(int value) = 0;
+
+    /// Stardust's read-only extensions (bmnielsen/openbw-bwapi), appended so every existing module's vtable is unchanged:
+    /// the engine's unit id, the position/heading/velocity at full precision, and the order process timer.
+    virtual int getBWID() const = 0;
+    virtual ExactPosition getExactPosition() const = 0;
+    virtual int getOrderProcessTimer() const = 0;
 
     ///@}
   };

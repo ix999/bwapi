@@ -231,4 +231,19 @@ namespace BWAPI
   {
     bwunit.setEnergy(value);
   }
+
+  int UnitImpl::getBWID() const
+  {
+    return bwunit.getUnitID();
+  }
+
+  ExactPosition UnitImpl::getExactPosition() const
+  {
+    return bwunit.getExactPosition();
+  }
+
+  int UnitImpl::getOrderProcessTimer() const
+  {
+    return bwunit.getOrderProcessTimer();
+  }
 };

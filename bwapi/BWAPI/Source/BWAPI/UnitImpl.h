@@ -250,6 +250,10 @@ namespace BWAPI
       virtual void setShields(int value) override;
       virtual void setEnergy(int value) override;
 
+      virtual int getBWID() const override;
+      virtual ExactPosition getExactPosition() const override;
+      virtual int getOrderProcessTimer() const override;
+
       //Internal BWAPI commands:
       UnitImpl(BW::Unit bwunit, u16 index);
       void die();

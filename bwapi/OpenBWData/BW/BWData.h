@@ -15,6 +15,10 @@ namespace bwgame {
   struct bullet_t;
 }
 
+namespace BWAPI {
+  struct ExactPosition;
+}
+
 namespace BW {
 
 
@@ -550,6 +554,10 @@ struct Unit {
   void setHitPoints(int value);
   void setShields(int value);
   void setEnergy(int value);
+
+  // Stardust's read-only extensions (BWAPI::UnitInterface::getExactPosition, getOrderProcessTimer)
+  BWAPI::ExactPosition getExactPosition() const;
+  int getOrderProcessTimer() const;
 };
 
 struct Bullet {

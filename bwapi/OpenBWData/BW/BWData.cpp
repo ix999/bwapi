@@ -1,4 +1,5 @@
 #include "BWData.h"
+#include "../../include/BWAPI/ExactPosition.h"
 #include "CachedAssetLoader.h"
 
 #include "bwgame.h"
@@ -3006,6 +3007,20 @@ void Unit::setEnergy(int value)
   w.template put<uint16_t>(impl->funcs.get_unit_id(u).raw_value);
   w.template put<int32_t>(value);
   impl->game_setup_helper.input_action(active_viewer, w.data(), w.size());
+}
+
+BWAPI::ExactPosition Unit::getExactPosition() const
+{
+  return {(uint32_t)u->exact_position.x.raw_value,
+          (uint32_t)u->exact_position.y.raw_value,
+          (int8_t)u->heading.raw_value,
+          (int32_t)u->velocity.x.raw_value,
+          (int32_t)u->velocity.y.raw_value};
+}
+
+int Unit::getOrderProcessTimer() const
+{
+  return u->order_process_timer;
 }
 
 
