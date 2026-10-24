@@ -114,6 +114,7 @@ namespace BWAPI
       if ( isUnitAlive(u) )
       {
         u->isAlive = true;
+        if (u->getID() == -1) u->setID(server.getUnitID(u));  // the ID is the Unitset hash key: final before the first insert
         aliveUnits.insert(u);
         if (seqMirror) seqScratch.emplace_back((int)u->getIndex(), u);  // u warm from isUnitAlive
         else           u->updateInternalData();
@@ -125,6 +126,7 @@ namespace BWAPI
       if ( isUnitAlive(u, true) )
       {
         u->isAlive = true;
+        if (u->getID() == -1) u->setID(server.getUnitID(u));  // the ID is the Unitset hash key: final before the first insert
         aliveUnits.insert(u);
         if (seqMirror) seqScratch.emplace_back((int)u->getIndex(), u);  // u warm from isUnitAlive
         else           u->updateInternalData();
@@ -136,6 +138,7 @@ namespace BWAPI
       if ( isUnitAlive(u) )
       {
         u->isAlive = true;
+        if (u->getID() == -1) u->setID(server.getUnitID(u));  // the ID is the Unitset hash key: final before the first insert
         aliveUnits.insert(u);
         if (seqMirror) seqScratch.emplace_back((int)u->getIndex(), u);  // u warm from isUnitAlive
         else           u->updateInternalData();
