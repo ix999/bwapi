@@ -284,6 +284,11 @@ struct Game {
   Unit createUnit(int owner, int unitType, int x, int y);
   void killUnit(Unit u);
   void removeUnit(Unit u);
+  // The *Local edits change only this process's game state, at once and unsynchronized: every process of a
+  // multiplayer game must make the same edit at the same frame boundary, or the game desyncs.
+  Unit createUnitLocal(int owner, int unitType, int x, int y);
+  void removeUnitLocal(Unit u);
+  void moveUnitLocal(Unit u, int x, int y);
 
   Snapshot saveSnapshot();
   void loadSnapshot(const Snapshot&);

@@ -2057,6 +2057,24 @@ void Game::removeUnit(Unit u)
   }
 }
 
+Unit Game::createUnitLocal(int owner, int unitType, int x, int y)
+{
+  return {impl->funcs.trigger_create_unit(impl->funcs.get_unit_type((bwgame::UnitTypes)unitType), {x, y}, owner), impl};
+}
+
+void Game::removeUnitLocal(Unit u)
+{
+  if (u.u) {
+    impl->funcs.hide_unit(u.u);
+    impl->funcs.kill_unit(u.u);
+  }
+}
+
+void Game::moveUnitLocal(Unit u, int x, int y)
+{
+  if (u.u) impl->funcs.move_unit(u.u, {x, y});
+}
+
 Snapshot Game::saveSnapshot()
 {
   auto v = std::make_unique<snapshot_impl>();
