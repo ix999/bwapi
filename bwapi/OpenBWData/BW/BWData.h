@@ -289,6 +289,8 @@ struct Game {
   Unit createUnitLocal(int owner, int unitType, int x, int y);
   void removeUnitLocal(Unit u);
   void moveUnitLocal(Unit u, int x, int y);
+  // whole points; a negative value leaves that stat as it is
+  void setUnitStatsLocal(Unit u, int hitPoints, int shields, int energy);
 
   Snapshot saveSnapshot();
   void loadSnapshot(const Snapshot&);

@@ -2075,6 +2075,14 @@ void Game::moveUnitLocal(Unit u, int x, int y)
   if (u.u) impl->funcs.move_unit(u.u, {x, y});
 }
 
+void Game::setUnitStatsLocal(Unit u, int hitPoints, int shields, int energy)
+{
+  if (!u.u) return;
+  if (hitPoints >= 0) impl->funcs.set_unit_hp(u.u, bwgame::fp8::integer(hitPoints));
+  if (shields >= 0) impl->funcs.set_unit_shield_points(u.u, bwgame::fp8::integer(shields));
+  if (energy >= 0) impl->funcs.set_unit_energy(u.u, bwgame::fp8::integer(energy));
+}
+
 Snapshot Game::saveSnapshot()
 {
   auto v = std::make_unique<snapshot_impl>();
