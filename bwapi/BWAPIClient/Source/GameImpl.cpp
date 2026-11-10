@@ -471,14 +471,27 @@ namespace BWAPI
     if ( data->flags[flag] == false )
       addCommand(BWAPIC::Command(BWAPIC::CommandType::EnableFlag, flag));
   }
+  namespace
+  {
+    // a GameData unit finder entry as Templates::iterateUnitFinder reads one (accessors in place of fields)
+    struct FinderEntry
+    {
+      int index;
+      int value;
+      int unitIndex() const { return index; }
+      int searchValue() const { return value; }
+    };
+    static_assert(sizeof(FinderEntry) == sizeof(unitFinder), "FinderEntry has unitFinder's layout");
+    const FinderEntry *finderEntries(const unitFinder *f) { return reinterpret_cast<const FinderEntry *>(f); }
+  }
   //----------------------------------------------- GET UNITS IN RECTANGLE -----------------------------------
   Unitset GameImpl::getUnitsInRectangle(int left, int top, int right, int bottom, const UnitFilter &pred) const
   {
     Unitset unitFinderResults;
 
     // Have the unit finder do its stuff
-    Templates::iterateUnitFinder<unitFinder>(data->xUnitSearch,
-                                             data->yUnitSearch,
+    Templates::iterateUnitFinder(finderEntries(data->xUnitSearch),
+                                             finderEntries(data->yUnitSearch),
                                              data->unitSearchSize,
                                              left,
                                              top,
@@ -495,8 +508,8 @@ namespace BWAPI
     int bestDistance = 99999999;
     Unit pBestUnit = nullptr;
 
-    Templates::iterateUnitFinder<unitFinder>(data->xUnitSearch,
-                                             data->yUnitSearch,
+    Templates::iterateUnitFinder(finderEntries(data->xUnitSearch),
+                                             finderEntries(data->yUnitSearch),
                                              data->unitSearchSize,
                                              left,
                                              top,
@@ -524,8 +537,8 @@ namespace BWAPI
     topLeft.makeValid();
     botRight.makeValid();
 
-    Templates::iterateUnitFinder<unitFinder>(data->xUnitSearch,
-                                             data->yUnitSearch,
+    Templates::iterateUnitFinder(finderEntries(data->xUnitSearch),
+                                             finderEntries(data->yUnitSearch),
                                              data->unitSearchSize,
                                              topLeft.x,
                                              topLeft.y,

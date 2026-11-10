@@ -67,6 +67,10 @@ namespace BWAPI
       return false;
     }
     //-------------------------------------------- UNIT FINDER -----------------------------------------------
+    // the largest finder id: Broodwar's unit index in process, a BWAPI unit id (GameData::units) in a client
+#ifndef BWAPI_FINDER_ID_MAX
+#define BWAPI_FINDER_ID_MAX BW::UNIT_ARRAY_MAX_LENGTH
+#endif
     template <class finder, typename _T>
     void iterateUnitFinder(finder finder_x, finder finder_y, int finderCount, int left, int top, int right, int bottom, const _T &callback)
     {
@@ -75,7 +79,7 @@ namespace BWAPI
       // Native unit indexes are dense and bounded (1..1700). This scratch state used to be an
       // unordered_map, which allocated and hashed several times for every spatial query. A fixed
       // byte table represents the same 0/1/2 states without changing finder or callback order.
-      std::array<unsigned char, BW::UNIT_ARRAY_MAX_LENGTH + 1> finderFlags{};
+      std::array<unsigned char, BWAPI_FINDER_ID_MAX + 1> finderFlags{};
       
       // Declare some variables
       int r = right, b = bottom;

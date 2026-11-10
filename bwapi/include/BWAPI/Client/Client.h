@@ -17,7 +17,10 @@ namespace BWAPI
     ~Client();
 
     bool isConnected() const;
+    /// Connects to the free server in the game table that has waited longest.
     bool connect();
+    /// Connects to the server whose process id is serverProcID.
+    bool connectTo(int serverProcID);
     void disconnect();
     void update();
 
@@ -29,6 +32,7 @@ namespace BWAPI
     int gameTableFileHandle = 0;
     GameTable *gameTable = nullptr;
     bool connected = false;
+    bool frameHeld = false;   // a frame the server handed over that update() has not handed back yet
   };
   extern Client BWAPIClient;
 }

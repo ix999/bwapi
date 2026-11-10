@@ -244,5 +244,10 @@ namespace BWAPI
       virtual bool canIssueCommandGrouped(UnitCommand command, bool checkCanUseTechPositionOnPositions = true, bool checkCanUseTechUnitOnUnits = true, bool checkCanTargetUnit = true, bool checkCanIssueCommandType = true, bool checkCommandibilityGrouped = true, bool checkCommandibility = true) const override;
 
       virtual bool issueCommand(UnitCommand command) override;
+
+      // OpenBW's in-process edits of a unit: a client has none, so each does nothing
+      void setHitPoints(int) override {}
+      void setShields(int) override {}
+      void setEnergy(int) override {}
   };
 }

@@ -71,5 +71,14 @@ namespace BWAPI
       virtual int  getMaxUpgradeLevel(UpgradeType upgrade) const override;
       virtual bool isResearchAvailable(TechType tech) const override;
       virtual bool isUnitAvailable(UnitType unit) const override;
+
+      // OpenBW's in-process edits of a player: a client has none, so each does nothing
+      void setRace(Race) override {}
+      void closeSlot() override {}
+      void openSlot() override {}
+      void setMinerals(int) override {}
+      void setGas(int) override {}
+      void setUpgradeLevel(UpgradeType, int) override {}
+      void setResearched(TechType, bool) override {}
   };
 };

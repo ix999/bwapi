@@ -30,7 +30,7 @@ inline void StrCopy(char (&dst)[N], const std::string &src)
 };
 
 template <size_t N>
-inline void VSNPrintf(char (&dst)[N], const char *fmt, va_list &ap)
+inline void VSNPrintf(char (&dst)[N], const char *fmt, va_list ap)
 {
   vsnprintf(dst, N-1, fmt, ap);
   StrTerminate(dst);

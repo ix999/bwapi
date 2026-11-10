@@ -198,5 +198,26 @@ namespace BWAPI
       virtual int getLastEventTime() const override;
       virtual bool setRevealAll(bool reveal = true) override;
       virtual unsigned getRandomSeed() const override;
+
+      // OpenBW's in-process controls (game setup, snapshots, unit edits): a client has none, so each does nothing
+      void setCharacterName(const std::string&) override {}
+      void setGameType(GameType) override {}
+      void setAIModule(AIModule*) override {}
+      void createSinglePlayerGame(std::function<void()>) override {}
+      void createMultiPlayerGame(std::function<void()>) override {}
+      void startGame() override {}
+      void switchToPlayer(Player) override {}
+      int connectedPlayerCount() override { return 0; }
+      Unit createUnit(Player, UnitType, Position) override { return nullptr; }
+      void killUnit(Unit) override {}
+      void removeUnit(Unit) override {}
+      void saveSnapshot(std::string) override {}
+      void loadSnapshot(const std::string&) override {}
+      void deleteSnapshot(const std::string&) override {}
+      std::vector<std::string> listSnapshots() override { return {}; }
+      void setRandomSeed(uint32_t) override {}
+      void disableTriggers() override {}
+      BWAPI::Position getScreenSize() const override { return BWAPI::Position(640, 480); }
+      std::tuple<int, int, uint32_t*> drawGameScreen(int, int, int, int) override { return std::tuple<int, int, uint32_t*>(0, 0, nullptr); }
   };
 }
